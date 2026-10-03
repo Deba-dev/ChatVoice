@@ -1,0 +1,70 @@
+CHATVOICE CLOUD  -  one-time setup, done once by YOU (the person sharing the app)
+Free. No card. About 20 minutes. Your friends never repeat this.
+
+WHAT IT IS
+A tiny free server on Cloudflare. It adds the bot to a Discord server, gives roles when people join through
+your invite links, receives payment confirmations from the streamer's own Razorpay, and (optionally) links chat
+names to Discord accounts. It never holds money.
+
+A. ACCOUNTS AND TOOLS
+1. Free Cloudflare account (cloudflare.com). 2. Node.js LTS (nodejs.org).
+
+B. DISCORD APPLICATION  (discord.com/developers/applications)
+1. New Application, name it "ChatVoice".
+2. Bot tab: Reset Token and copy it. Leave "Public Bot" ON.
+   Also switch ON  "Server Members Intent"  (needed to see who just joined). No verification is needed for small bots.
+3. OAuth2 tab: copy the Client ID and the Client Secret.
+
+C. DEPLOY  (Command Prompt inside the "cloud" folder)
+   npx wrangler login
+   npx wrangler kv namespace create KV           -> paste the printed id into wrangler.toml (PASTE_KV_ID_HERE)
+   npx wrangler d1 create chatvoice              -> paste the printed database_id into wrangler.toml (PASTE_D1_ID_HERE)
+   npx wrangler deploy                           -> prints your address: https://chatvoice-cloud.YOURNAME.workers.dev
+
+D. FINISH THE DISCORD APPLICATION
+   OAuth2 > Redirects: add BOTH (with your own address)
+        https://chatvoice-cloud.YOURNAME.workers.dev/setup/callback
+        https://chatvoice-cloud.YOURNAME.workers.dev/link/callback
+   Click Save Changes.
+
+E. GIVE THE CLOUD ITS SECRETS  (each command asks you to paste the value)
+   npx wrangler secret put DISCORD_CLIENT_ID
+   npx wrangler secret put DISCORD_CLIENT_SECRET
+   npx wrangler secret put DISCORD_BOT_TOKEN
+   npx wrangler deploy
+
+F. CHECK
+   Open  https://YOUR-ADDRESS/health  : every item should say true. It never shows secret values.
+   Optional self-test of the cloud code:  node test.mjs
+
+EACH STREAMER  (ChatVoice > Discord page)
+1. Paste the cloud address. Click "Add bot to my server", choose the server, Authorize.
+   The bot asks for two permissions: Manage Roles (to give roles) and Manage Server (only to see how many times each
+   invite was used). If you added the bot before this version, add it again so it gets Manage Server.
+2. Copy the SERVER KEY shown after authorizing into ChatVoice, click "Test connection".
+3. In Discord: Server Settings > Roles: drag the "ChatVoice" role ABOVE the roles it should give.
+4. ROLES FROM INVITE LINKS (recommended, no login page, nothing looks suspicious to viewers):
+   - In Discord: Invite People > Edit invite link > Expire: Never, Max uses: No limit. Make one per place
+     (one for YouTube, one for Twitch, one for Kick).
+   - In ChatVoice > Discord > section 2: paste each invite, pick the role, "Save invite roles", then "Check now".
+   - Put the YouTube invite in your video description / pinned comment. Whoever joins through it gets the YouTube role.
+   - Every 2 minutes the cloud sees which invite was used and gives the matching role.
+5. Optional chat-activity roles (Regular / Supporter) use the link page (viewers log in with Discord once).
+
+LIMITS OF INVITE ROLES (honest version)
+- It proves WHICH INVITE someone used, not that they really watch or subscribe on YouTube.
+- If people join through two different invites within the same 2 minutes, it cannot tell who used which, so it gives
+  no roles that round. People who joined at that moment need the role by hand.
+- Invites that expire or hit a use limit disappear and cannot be tracked. Use "never expire / no limit".
+- Servers with more than 5,000 members are not fully scanned.
+
+PAYMENTS: see PAYMENTS-SETUP.txt.   YOUTUBE DELETING MESSAGES: see YT-MODERATION-SETUP.txt.
+
+TROUBLESHOOTING
+- /health shows false for something: set that secret again with  npx wrangler secret put NAME  then  npx wrangler deploy
+- "Error 1101" or a Discord error about client_id: a secret is missing (check with  npx wrangler secret list).
+- "Invalid redirect": the two redirect links in step D are missing or have a typo.
+- "Could not give the ... role (403)": the ChatVoice role is below that role. Drag it higher.
+- Invite check says "Server Members Intent": switch it on in the Developer Portal (Bot tab).
+- After updating the cloud files: run  npx wrangler deploy  again. Secrets and data are kept.
+- Free limits (about 100,000 requests a day, 1,000 storage writes a day) are far above what ten streamers use.

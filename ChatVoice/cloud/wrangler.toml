@@ -1,0 +1,21 @@
+name = "chatvoice-cloud"
+main = "src/index.js"
+compatibility_date = "2024-11-01"
+
+# Checks every 2 minutes which invite new Discord members used (free plan)
+[triggers]
+crons = ["*/2 * * * *"]
+
+# Run:  npx wrangler kv namespace create KV   and paste the printed id below
+[[kv_namespaces]]
+binding = "KV"
+id = "iesp6eyyoawxdfqpzzy0s7s0b957kikc61emxh13"
+
+# Payment alerts database. Run:  npx wrangler d1 create chatvoice  and paste the printed id below
+[[d1_databases]]
+binding = "DB"
+database_name = "chatvoice"
+database_id = "PASTE_D1_ID_HERE"
+
+# Secrets (set with: npx wrangler secret put NAME)
+#   DISCORD_CLIENT_ID, DISCORD_CLIENT_SECRET, DISCORD_BOT_TOKEN
