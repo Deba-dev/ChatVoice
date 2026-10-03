@@ -267,8 +267,8 @@ class MainWindow(QWidget):
         info = self.pending_update
         if not info:
             return
-        if not self.updater.frozen or not info.get("asset"):
-            QDesktopServices.openUrl(QUrl(info.get("page") or "https://github.com/%s/releases" % self.s.get("update_repo")))
+        if not info.get("asset"):
+            self.feed.append("<span style='color:#7cf0c0'>Update: No installer file is attached to this release yet.</span>")
             return
         self.banner_text.setText("Downloading update...")
         self.upd_btn.setEnabled(False)
