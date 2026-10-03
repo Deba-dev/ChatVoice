@@ -4,8 +4,7 @@ import os
 import sys
 import time
 
-from PySide6.QtCore import (QEasingCurve, QParallelAnimationGroup, QPauseAnimation, QPropertyAnimation, QSequentialAnimationGroup,
-                            Qt, QTimer, QUrl)
+from PySide6.QtCore import QEasingCurve, QParallelAnimationGroup, QPropertyAnimation, Qt, QTimer, QUrl
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (QApplication, QButtonGroup, QCheckBox, QComboBox, QFrame, QGraphicsOpacityEffect, QHBoxLayout,
                                QLabel, QLineEdit, QPlainTextEdit, QPushButton, QSlider, QSpinBox, QStackedWidget,
@@ -472,22 +471,17 @@ class MainWindow(QWidget):
         self.stack.setCurrentIndex(i)
         if self.s.get("lite_mode"):
             return
-        cards = [f for f in page.findChildren(QFrame) if f.objectName() == "card"][:8]
         group = QParallelAnimationGroup(self)
-        targets = cards or [page]
-        for n, w in enumerate(targets):          # cards float in one after another
-            fx = QGraphicsOpacityEffect(w)
-            fx.setOpacity(0.0)
-            w.setGraphicsEffect(fx)
-            a = QPropertyAnimation(fx, b"opacity")
-            a.setDuration(320)
-            a.setStartValue(0.0)
-            a.setEndValue(1.0)
-            a.setEasingCurve(QEasingCurve.OutCubic)
-            seq = QSequentialAnimationGroup()
-            seq.addAnimation(QPauseAnimation(n * 90))
-            seq.addAnimation(a)
-            group.addAnimation(seq)
+        targets = [page]
+        fx = QGraphicsOpacityEffect(page)
+        fx.setOpacity(0.0)
+        page.setGraphicsEffect(fx)
+        a = QPropertyAnimation(fx, b"opacity")
+        a.setDuration(160)
+        a.setStartValue(0.0)
+        a.setEndValue(1.0)
+        a.setEasingCurve(QEasingCurve.OutCubic)
+        group.addAnimation(a)
         group.finished.connect(self._end_anim)
         self._anims, self._anim_targets = [group], targets
         group.start()
