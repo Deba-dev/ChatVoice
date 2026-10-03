@@ -13,6 +13,32 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      - name: Write the release tag into the version text
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: python
+        run: |
+          import os, re
+          from pathlib import Path
+          ver = os.environ["GITHUB_REF_NAME"][1:]
+          parts = [int(x) for x in re.findall(r"\d+", ver)[:4]]
+          parts += [0] * (4 - len(parts))
+          py = Path("app/version.py")
+          py.write_text(re.sub(r'VERSION = "[^"]+"', 'VERSION = "%s"' % ver, py.read_text(encoding="utf-8"), count=1), encoding="utf-8")
+          iss = Path("installer.iss")
+          text = iss.read_text(encoding="utf-8")
+          text = re.sub(r"AppVersion=.*", "AppVersion=%s" % ver, text)
+          text = re.sub(r"AppVerName=ChatVoice .*", "AppVerName=ChatVoice %s BETA" % ver, text)
+          text = re.sub(r"VersionInfoVersion=.*", "VersionInfoVersion=%d.%d.%d.%d" % tuple(parts), text)
+          iss.write_text(text, encoding="utf-8")
+          info = Path("version_info.txt")
+          body = info.read_text(encoding="utf-8")
+          body = re.sub(r"filevers=\([^)]*\)", "filevers=(%d, %d, %d, %d)" % tuple(parts), body)
+          body = re.sub(r"prodvers=\([^)]*\)", "prodvers=(%d, %d, %d, %d)" % tuple(parts), body)
+          body = re.sub(r"StringStruct\('FileVersion', '[^']*'\)", "StringStruct('FileVersion', '%d.%d.%d.%d')" % tuple(parts), body)
+          body = re.sub(r"StringStruct\('ProductVersion', '[^']*'\)", "StringStruct('ProductVersion', '%s BETA')" % ver, body)
+          info.write_text(body, encoding="utf-8")
+        env:
+          GITHUB_REF_NAME: ${{ github.ref_name }}
       - run: pip install -r requirements.txt pyinstaller
       - run: pyinstaller --noconfirm --windowed --noupx --name ChatVoice --icon assets/icon.ico --version-file version_info.txt --add-data "assets;assets" --exclude-module numpy --exclude-module PIL --exclude-module tkinter --exclude-module matplotlib --collect-submodules pytchat --collect-submodules edge_tts main.py
       - run: choco install innosetup -y --no-progress
