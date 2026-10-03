@@ -53,15 +53,17 @@ def labeled(text, widget, hint=""):
 
 
 class PlatformCard(QFrame):
-    def __init__(self, key, title, placeholder, source, settings, extra=None):
+    def __init__(self, key, title, placeholder, source, settings, extra=None, hint=""):
         super().__init__()
         self.setObjectName("card")
         self.key, self.source, self.s = key, source, settings
         lay = QVBoxLayout(self)
-        lay.setContentsMargins(18, 14, 18, 14)
+        lay.setContentsMargins(16, 14, 16, 14)
+        lay.setSpacing(8)
         head = QHBoxLayout()
+        head.setSpacing(8)
         self.dot = QLabel("●")
-        self.dot.setStyleSheet("color:#4a5168; font-size:16px;")
+        self.dot.setStyleSheet("color:#4a5168; font-size:12px;")
         name = QLabel(title)
         name.setStyleSheet("font-size:15px; font-weight:600;")
         head.addWidget(self.dot)
@@ -69,9 +71,17 @@ class PlatformCard(QFrame):
         head.addStretch(1)
         self.status = QLabel("Not connected")
         self.status.setObjectName("sub")
-        head.addWidget(self.status)
+        self.status.setWordWrap(True)
+        self.status.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        head.addWidget(self.status, 1)
         lay.addLayout(head)
+        if hint:
+            h = QLabel(hint)
+            h.setObjectName("hint")
+            h.setWordWrap(True)
+            lay.addWidget(h)
         row = QHBoxLayout()
+        row.setSpacing(8)
         self.edit = QLineEdit(settings.get(key))
         self.edit.setPlaceholderText(placeholder)
         row.addWidget(self.edit, 1)
@@ -82,8 +92,11 @@ class PlatformCard(QFrame):
         lay.addLayout(row)
         self.extra = None
         if extra:
+            cap = QLabel(extra[1])
+            cap.setObjectName("hint")
+            lay.addWidget(cap)
             self.extra = QLineEdit(settings.get(extra[0]))
-            self.extra.setPlaceholderText(extra[1])
+            self.extra.setPlaceholderText("Optional")
             lay.addWidget(self.extra)
         self.btn.clicked.connect(self.toggle)
         self.edit.returnPressed.connect(self.toggle)
@@ -104,7 +117,15 @@ class PlatformCard(QFrame):
 
     def set_status(self, text, ok):
         self.status.setText(text)
-        self.dot.setStyleSheet("color:%s; font-size:16px;" % ("#3ddc84" if ok else "#ffb020" if "..." in text else "#4a5168"))
+        if ok:
+            color = "#3ddc84"
+        elif "..." in text:
+            color = "#ffb020"
+        elif text in ("Not connected", "Disconnected"):
+            color = "#4a5168"
+        else:
+            color = "#ff6b8a"
+        self.dot.setStyleSheet("color:%s; font-size:12px;" % color)
         running = self.source.running
         self.btn.setText("Disconnect" if running else "Connect")
         self.btn.setObjectName("stop" if running else "primary")
@@ -183,9 +204,6 @@ class MainWindow(QWidget):
         self.updater.progress.connect(self.banner_text.setText)
         self.updater.quit_now.connect(lambda: QTimer.singleShot(400, QApplication.quit))
         QTimer.singleShot(6000, self._auto_update)
-        for b in self.findChildren(QPushButton):
-            if b.objectName() != "nav":
-                self.fx.attach(b)
         self.apply_theme(self.s.get("theme"))
         self.goto(0)
 
@@ -212,18 +230,18 @@ class MainWindow(QWidget):
         lay.addStretch(1)
         box = QWidget()
         bl = QVBoxLayout(box)
-        bl.setContentsMargins(16, 0, 16, 6)
-        bl.setSpacing(6)
+        bl.setContentsMargins(16, 12, 16, 6)
+        bl.setSpacing(8)
+        lab = QLabel("Appearance")
+        lab.setObjectName("hint")
+        bl.addWidget(lab)
         theme = QComboBox()
         theme.addItems(list(THEMES))
         theme.setCurrentText(self.s.get("theme") if self.s.get("theme") in THEMES else DEFAULT_THEME)
         theme.currentTextChanged.connect(self.apply_theme)
-        lab = QLabel("Theme")
-        lab.setObjectName("hint")
-        bl.addWidget(lab)
         bl.addWidget(theme)
         lite = QCheckBox("Lite mode")
-        lite.setToolTip("Turns off glow and fade animations. Use it on slow PCs or while gaming.")
+        lite.setToolTip("Turns off fade animations. Use it on slow PCs or while gaming.")
         lite.setChecked(bool(self.s.get("lite_mode")))
         lite.toggled.connect(self._lite)
         bl.addWidget(lite)
@@ -311,13 +329,14 @@ class MainWindow(QWidget):
         self.pulse.setLoopCount(-1)
         bar.addWidget(self.live)
         bar.addStretch(1)
-        self.mute_btn = QPushButton("🔇  Mute")
+        self.mute_btn = QPushButton("Mute")
+        self.mute_btn.setObjectName("quiet")
         self.mute_btn.setCheckable(True)
         self.mute_btn.setChecked(bool(self.s.get("muted")))
         self.mute_btn.toggled.connect(self._mute)
-        skip = QPushButton("⏭  Skip")
+        skip = QPushButton("Skip")
         skip.clicked.connect(self.speaker.skip)
-        test = QPushButton("▶  Test voice")
+        test = QPushButton("Test voice")
         test.clicked.connect(self.test_voice)
         for b in (self.mute_btn, skip, test):
             bar.addWidget(b)
@@ -333,10 +352,13 @@ class MainWindow(QWidget):
         intro.setObjectName("sub")
         lay.addWidget(intro)
         self.cards = {
-            "youtube": PlatformCard("youtube", "YouTube Live", "Live stream link or video ID", YouTubeSource(self.hub), self.s),
-            "twitch": PlatformCard("twitch", "Twitch", "Channel name", TwitchSource(self.hub), self.s),
+            "youtube": PlatformCard("youtube", "YouTube Live", "Live stream link or video ID", YouTubeSource(self.hub), self.s,
+                                    hint="Stream link or video ID. No password needed."),
+            "twitch": PlatformCard("twitch", "Twitch", "Channel name", TwitchSource(self.hub), self.s,
+                                   hint="The channel name from your Twitch URL."),
             "kick": PlatformCard("kick", "Kick", "Channel name", KickSource(self.hub), self.s,
-                                 extra=("kick_room", "Chatroom ID (only if the lookup fails)")),
+                                 extra=("kick_room", "Chatroom ID, only if the name lookup fails"),
+                                 hint="The channel name from your Kick URL."),
         }
         for c in self.cards.values():
             lay.addWidget(c)
