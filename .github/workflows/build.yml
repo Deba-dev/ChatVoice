@@ -1,0 +1,21 @@
+name: Build ChatVoice
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt pyinstaller
+      - run: pyinstaller --noconfirm --windowed --noupx --name ChatVoice --icon assets/icon.ico --add-data "assets;assets" --exclude-module numpy --exclude-module PIL --exclude-module tkinter --exclude-module matplotlib --collect-submodules pytchat --collect-submodules edge_tts main.py
+      - run: choco install innosetup -y --no-progress
+      - run: '& "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" installer.iss'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ChatVoice-Setup
+          path: installer/ChatVoice-Setup.exe
