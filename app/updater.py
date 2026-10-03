@@ -69,9 +69,6 @@ class Updater(QObject):
 
     # ----- install -----
     def install(self, info):
-        if not self.frozen:
-            self.message.emit("Updates install themselves only in the installed app. Download the new installer from GitHub Releases.")
-            return
         asset = info.get("asset", "")
         if not asset.startswith(DL_PREFIX.format(repo=self.s.get("update_repo").strip())):
             self.message.emit("The update file is not from your GitHub repository, so it was not downloaded.")

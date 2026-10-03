@@ -247,12 +247,10 @@ ghs = ThreadingHTTPServer(("127.0.0.1", 8813), Gh); threading.Thread(target=ghs.
 upd.GH_API = "http://127.0.0.1:8813"; upd.DL_PREFIX = "http://127.0.0.1:8813/dl/"
 w.banner.hide(); w.updater.check(True); wait(900)
 ok(w.banner.isVisible() and "9.9.9" in w.banner_text.text() and w.pending_update["notes"] == "New things", "newer version -> banner appears")
-opened = []; import app.ui as _ui; _ui.QDesktopServices.openUrl = lambda u: opened.append(u.toString())
-w._update_now(); ok(opened and "github.com" in opened[0], "development copy: 'Update now' opens the download page instead")
 launched, quits = [], []
-w.updater.frozen = True; w.updater.launch = lambda path: launched.append(path); w.updater.quit_now.disconnect(); w.updater.quit_now.connect(lambda: quits.append(1))
+w.updater.frozen = False; w.updater.launch = lambda path: launched.append(path); w.updater.quit_now.disconnect(); w.updater.quit_now.connect(lambda: quits.append(1))
 w.upd_btn.setEnabled(True); w._update_now(); wait(1500)
-ok(len(launched) == 1 and launched[0].endswith("ChatVoice-Setup-9.9.9.exe") and open(launched[0], "rb").read() == BLOB and quits == [1], "installed app: update downloaded, installer started, app closes itself")
+ok(len(launched) == 1 and launched[0].endswith("ChatVoice-Setup-9.9.9.exe") and open(launched[0], "rb").read() == BLOB and quits == [1], "Update now downloads the installer and starts it without opening GitHub")
 GH["digest"] = "sha256:" + "0" * 64; launched.clear(); w.updater.check(False); wait(700); w.pending_update and w.updater.install(w.pending_update); wait(1500)
 ok(not launched and "did not match" in w.feed.toPlainText(), "corrupted download (wrong checksum) is discarded, not run")
 w.updater.install({"version": "9.9.9", "asset": "http://evil.example/x.exe"}); wait(200)
