@@ -1,17 +1,21 @@
 """ChatVoice main window. Animations only run on interaction, so idle CPU stays near zero."""
 import html
 import os
+import sys
+import time
 
 from PySide6.QtCore import (QEasingCurve, QParallelAnimationGroup, QPauseAnimation, QPropertyAnimation, QSequentialAnimationGroup,
                             Qt, QTimer, QUrl)
 from PySide6.QtGui import QDesktopServices
-from PySide6.QtWidgets import (QButtonGroup, QCheckBox, QComboBox, QFrame, QGraphicsOpacityEffect, QHBoxLayout,
+from PySide6.QtWidgets import (QApplication, QButtonGroup, QCheckBox, QComboBox, QFrame, QGraphicsOpacityEffect, QHBoxLayout,
                                QLabel, QLineEdit, QPlainTextEdit, QPushButton, QSlider, QSpinBox, QStackedWidget,
                                QTextEdit, QVBoxLayout, QWidget)
 
 from . import hinglish
 from .discord import Bridge, Cloud, LinkManager
 from .discord_page import DiscordPage
+from .overlay import Overlay
+from .overlay_ui import OverlayPage
 from .payments import TipPoller
 from .payments_page import PaymentsPage
 from .ytmod import GoogleAuth, YtModerator
@@ -22,10 +26,13 @@ from .platforms import Hub, KickSource, TwitchSource, YouTubeSource
 from .settings import Settings, data_dir
 from .speech import VOICES, Speaker
 from .theme import DEFAULT_THEME, FX, THEMES, build_qss
+from .updater import Updater
+from .version import CREATOR, STAGE, VERSION, label
 
 COLORS = {"youtube": "#ff4d4d", "twitch": "#9146ff", "kick": "#53fc18", "test": "#00d4ff", "tip": "#ffd24d"}
 TAGS = {"youtube": "YT", "twitch": "TW", "kick": "KICK", "test": "TEST", "tip": "TIP"}
-PAGES = ("Connect", "Live chat", "Voice", "Moderation", "Discord", "Payments", "YouTube mod")
+PAGES = ("Connect", "Live chat", "Voice", "Moderation", "Discord", "Payments", "YouTube mod", "OBS overlays")
+ROOT = getattr(sys, "_MEIPASS", os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 def esc(s):
     return html.escape(s or "")
@@ -110,9 +117,9 @@ class MainWindow(QWidget):
     def __init__(self):
         super().__init__()
         self.setObjectName("root")
-        self.setWindowTitle("ChatVoice")
+        self.setWindowTitle("ChatVoice (%s) \u2014 by %s" % (STAGE, CREATOR))
         self.resize(1000, 660)
-        self.setMinimumSize(840, 560)
+        self.setMinimumSize(860, 620)
         self.s = Settings()
         self.hub = Hub()
         self.speaker = Speaker(self.s)
@@ -135,6 +142,11 @@ class MainWindow(QWidget):
         self.gauth = GoogleAuth(self.s)
         self.ytmod = YtModerator(self.s, self.gauth, self.bridge)
         self.ytpage = YtModPage(self.s, self.gauth, self.bridge, self.ytmod)
+        self.overlay = Overlay(self.s, os.path.join(ROOT, "assets", "fonts"), self._overlay_cfg)
+        self.overlay.start()
+        self.ovpage = OverlayPage(self.s, self.overlay)
+        self.updater = Updater(self.s)
+        self.pending_update = None
 
         root = QHBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
@@ -143,8 +155,10 @@ class MainWindow(QWidget):
         right = QVBoxLayout()
         right.setContentsMargins(26, 20, 26, 20)
         right.addLayout(self._build_topbar())
+        self.banner = self._build_banner()
+        right.addWidget(self.banner)
         self.stack = QStackedWidget()
-        for page in (self._page_connect(), self._page_feed(), self._page_voice(), self._page_mod(), self.discord, self.payments, self.ytpage):
+        for page in (self._page_connect(), self._page_feed(), self._page_voice(), self._page_mod(), self.discord, self.payments, self.ytpage, self.ovpage):
             self.stack.addWidget(page)
         right.addWidget(self.stack, 1)
         root.addLayout(right, 1)
@@ -164,6 +178,11 @@ class MainWindow(QWidget):
         self.poller.notice.connect(lambda t: self.feed.append("<span style='color:#ffd24d'>%s</span>" % esc(t)))
         self.ytmod.notice.connect(lambda t: self.feed.append("<span style='color:#ff8a5c'>YouTube mod: %s</span>" % esc(t)))
         QTimer.singleShot(2500, self.poller.apply)
+        self.updater.found.connect(self._update_found)
+        self.updater.message.connect(lambda t: self.feed.append("<span style='color:#7cf0c0'>Update: %s</span>" % esc(t)))
+        self.updater.progress.connect(self.banner_text.setText)
+        self.updater.quit_now.connect(lambda: QTimer.singleShot(400, QApplication.quit))
+        QTimer.singleShot(6000, self._auto_update)
         for b in self.findChildren(QPushButton):
             if b.objectName() != "nav":
                 self.fx.attach(b)
@@ -208,12 +227,62 @@ class MainWindow(QWidget):
         lite.setChecked(bool(self.s.get("lite_mode")))
         lite.toggled.connect(self._lite)
         bl.addWidget(lite)
+        upd = QPushButton("Check for updates")
+        upd.clicked.connect(lambda: self.updater.check(True))
+        bl.addWidget(upd)
         lay.addWidget(box)
-        ver = QLabel("Phase 4 • v0.3")
+        ver = QLabel(label())
         ver.setObjectName("hint")
         ver.setContentsMargins(16, 0, 0, 0)
+        by = QLabel("by <b>%s</b>" % CREATOR)
+        by.setObjectName("hint")
+        by.setContentsMargins(16, 0, 0, 0)
         lay.addWidget(ver)
+        lay.addWidget(by)
         return side
+
+    def _build_banner(self):
+        b = QFrame()
+        b.setObjectName("banner")
+        lay = QHBoxLayout(b)
+        lay.setContentsMargins(16, 8, 12, 8)
+        self.banner_text = QLabel("")
+        lay.addWidget(self.banner_text, 1)
+        self.upd_btn = QPushButton("Update now")
+        self.upd_btn.setObjectName("primary")
+        self.upd_btn.clicked.connect(self._update_now)
+        later = QPushButton("Later")
+        later.clicked.connect(b.hide)
+        lay.addWidget(self.upd_btn)
+        lay.addWidget(later)
+        b.hide()
+        return b
+
+    def _update_found(self, info):
+        self.pending_update = info
+        self.banner_text.setText("A new version is available: %s (you have %s)" % (info["version"], VERSION))
+        self.banner.show()
+
+    def _update_now(self):
+        info = self.pending_update
+        if not info:
+            return
+        if not self.updater.frozen or not info.get("asset"):
+            QDesktopServices.openUrl(QUrl(info.get("page") or "https://github.com/%s/releases" % self.s.get("update_repo")))
+            return
+        self.banner_text.setText("Downloading update...")
+        self.upd_btn.setEnabled(False)
+        self.updater.install(info)
+
+    def _auto_update(self):
+        if self.s.get("auto_update_check") and time.time() - float(self.s.get("update_last") or 0) > 20 * 3600:
+            self.updater.check(False)
+
+    def _overlay_cfg(self):
+        t = THEMES.get(self.s.get("theme"), THEMES[DEFAULT_THEME])
+        return {"colors": {"a1": t["a1"], "a2": t["a2"], "a3": t["a3"]}, "sound": bool(self.s.get("ov_sound")),
+                "seconds": int(self.s.get("ov_seconds")), "showMessage": bool(self.s.get("ov_show_message")),
+                "chatSeconds": int(self.s.get("ov_chat_seconds")), "maxLines": 8}
 
     def _build_topbar(self):
         bar = QHBoxLayout()
@@ -467,6 +536,10 @@ class MainWindow(QWidget):
         if ok:
             self.feed.append("%s <b>%s</b>%s: %s" % (tag, esc(m.author), amt, esc(m.text)))
             self.speaker.say(m.author, m.text, m.amount if m.kind == "super" else "")
+            if m.platform != "tip":
+                self.overlay.push("chat", {"platform": m.platform, "name": m.author, "text": m.text})
+            if m.kind == "super":
+                self.overlay.push("alert", {"platform": m.platform, "name": m.author, "amount": m.amount, "message": m.text})
             if m.kind == "super":
                 self.discord.post_paid(m)
         else:
@@ -491,6 +564,7 @@ class MainWindow(QWidget):
 
     def closeEvent(self, e):
         self.links.save()
+        self.overlay.stop()
         for c in self.cards.values():
             c.source.stop()
         self.speaker.clear()

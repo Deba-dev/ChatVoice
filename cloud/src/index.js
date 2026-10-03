@@ -45,6 +45,11 @@ async function cached(key, loader, ttlMs = 30000) {
   return val;
 }
 
+const b64 = (buf) => btoa(String.fromCharCode(...new Uint8Array(buf)));
+async function hmacRaw(secret, data) {
+  const key = await crypto.subtle.importKey("raw", enc.encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  return crypto.subtle.sign("HMAC", key, enc.encode(data));
+}
 const hex = (buf) => Array.from(new Uint8Array(buf), (b) => b.toString(16).padStart(2, "0")).join("");
 async function hmacHex(secret, data) {
   const key = await crypto.subtle.importKey("raw", enc.encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
@@ -165,6 +170,77 @@ async function runScheduled(env) {
       if (guild) await checkInvites(env, id, guild);
     } catch (_) { /* try again next round */ }
   }
+}
+
+const ZERO_DECIMAL = new Set(["JPY", "KRW", "VND", "CLP", "ISK", "UGX", "XAF", "XOF"]);
+const minorToMajor = (amount, currency) => (ZERO_DECIMAL.has(currency) ? Number(amount) : Number(amount) / 100) || 0;
+const NAME_KEY = /(^|[^a-z])(name|donor|from)([^a-z]|$)/i, NAME_BAD = /form|file|order|merchant|business|bank|upi|app|gateway|brand|plan|product|item/i;
+const MSG_KEY = /message|msg|note|comment|wish|text|say/i;
+
+// collect (label, value) text pairs from any JSON shape, including [{label, value}] lists
+function collectPairs(obj, out = [], depth = 0) {
+  if (depth > 6 || obj == null) return out;
+  if (Array.isArray(obj)) { obj.forEach((x) => collectPairs(x, out, depth + 1)); return out; }
+  if (typeof obj !== "object") return out;
+  const label = ["label", "title", "field_name", "key", "name"].map((k) => obj[k]).find((v) => typeof v === "string" || (v && typeof v.custom === "string"));
+  const value = ["value", "answer", "field_value"].map((k) => obj[k]).find((v) => typeof v === "string");
+  if (label && value) out.push([typeof label === "string" ? label : label.custom, value]);
+  for (const [k, v] of Object.entries(obj)) {
+    if (typeof v === "string") out.push([k, v]);
+    else if (v && typeof v === "object") {
+      if (typeof v.value === "string" && !Array.isArray(v)) out.push([k, v.value]);          // stripe custom_fields[i].text.value
+      collectPairs(v, out, depth + 1);
+    }
+  }
+  return out;
+}
+function pickNameMessage(pairs) {
+  let name = "", message = "";
+  for (const [k, v] of pairs) {
+    if (!v || !String(v).trim()) continue;
+    if (!name && NAME_KEY.test(k) && !NAME_BAD.test(k)) name = v;
+    else if (!message && MSG_KEY.test(k) && !/url|link/i.test(k)) message = v;
+  }
+  return { name, message };
+}
+function deepFind(obj, key, depth = 0) {
+  if (depth > 6 || obj == null || typeof obj !== "object") return undefined;
+  if (key in obj && obj[key] != null && typeof obj[key] !== "object") return obj[key];
+  for (const v of Object.values(obj)) { const r = deepFind(v, key, depth + 1); if (r !== undefined) return r; }
+  return undefined;
+}
+const mkTip = (id, name, message, value, currency) => ({
+  id: String(id), name: clean(name, 40) || "Someone", message: clean(message, 300), value, currency, display: displayAmount(value, currency),
+});
+
+function parseStripe(ev) {
+  if (!["checkout.session.completed", "checkout.session.async_payment_succeeded"].includes(ev.type)) return { ignored: ev.type };
+  const o = (ev.data && ev.data.object) || {};
+  if (o.payment_status !== "paid") return { ignored: "not paid yet" };
+  const currency = String(o.currency || "usd").toUpperCase();
+  // Stripe keeps a field's label and its answer in different places: key/label.custom ... text.value
+  const pairs = (Array.isArray(o.custom_fields) ? o.custom_fields : []).map((f) => [
+    (f.key || "") + " " + ((f.label && f.label.custom) || ""),
+    String((f.text && f.text.value) ?? (f.numeric && f.numeric.value) ?? (f.dropdown && f.dropdown.value) ?? ""),
+  ]);
+  const f = pickNameMessage(pairs);
+  return { tip: mkTip(o.id, f.name || (o.customer_details && o.customer_details.name), f.message, minorToMajor(o.amount_total, currency), currency) };
+}
+function parseCashfree(body) {
+  const t = String(body.type || "").toLowerCase();
+  if (!["payment_success_webhook", "payment_form_order_webhook"].includes(t)) return { ignored: t || "unknown" };
+  const amount = Number(deepFind(body, "order_amount"));
+  if (!(amount > 0)) return { ignored: "no amount" };
+  const currency = String(deepFind(body, "order_currency") || "INR").toUpperCase();
+  const f = pickNameMessage(collectPairs(body.data || body));
+  const id = deepFind(body, "cf_payment_id") || deepFind(body, "order_id");
+  if (!id) return { ignored: "no id" };
+  return { tip: mkTip(id, f.name, f.message, amount, currency) };
+}
+function parseGeneric(body) {
+  const value = Number(body.amount);
+  if (!(value > 0)) return { ignored: "no amount" };
+  return { tip: mkTip(body.id || crypto.randomUUID(), body.name, body.message, value, String(body.currency || "INR").toUpperCase()) };
 }
 
 async function bot(env, method, path, body) {
@@ -290,20 +366,50 @@ async function linkCallback(env, origin, url) {
 }
 
 // ---------------- payment webhook (called by the streamer's gateway) ----------------
-async function razorpayHook(request, env, hookId) {
+const GATEWAYS = ["razorpay", "stripe", "cashfree", "generic"];
+
+async function paymentHook(request, env, gateway, hookId) {
   const guildId = await cached("h:" + hookId, () => kvGet(env, "hook:" + hookId));
   const guild = guildId && (await cached("g:" + guildId, () => kvGet(env, "guild:" + guildId)));
-  const secret = guild && guild.config && guild.config.razorpaySecret;
+  const secret = guild && guild.config && guild.config[gateway + "Secret"];
   if (!secret) return json({ error: "unknown hook" }, 404);
   const raw = await request.text();
-  const sig = request.headers.get("X-Razorpay-Signature") || "";
-  if (!sig || !safeEqual(await hmacHex(secret, raw), sig.toLowerCase())) return json({ error: "bad signature" }, 400);
+  const h = (n) => request.headers.get(n) || "";
   let body;
-  try { body = JSON.parse(raw); } catch (_) { return json({ error: "bad json" }, 400); }
-  if (body.event !== "payment.captured") return json({ ok: true, ignored: body.event || "unknown" });
-  const pay = body.payload && body.payload.payment && body.payload.payment.entity;
-  if (!pay || !pay.id) return json({ ok: true, ignored: "no payment" });
-  const t = parseRazorpay(pay);
+  try { body = JSON.parse(raw); } catch (_) { body = null; }
+
+  let verified = false, result;
+  if (gateway === "razorpay") {
+    const sig = h("X-Razorpay-Signature").toLowerCase();
+    verified = !!sig && safeEqual(hex(await hmacRaw(secret, raw)), sig);
+  } else if (gateway === "stripe") {
+    const parts = h("Stripe-Signature").split(",").map((x) => x.trim().split("="));
+    const t = (parts.find((x) => x[0] === "t") || [])[1];
+    const sigs = parts.filter((x) => x[0] === "v1").map((x) => x[1]);
+    if (t && Math.abs(Date.now() / 1000 - Number(t)) <= 300) {
+      const want = hex(await hmacRaw(secret, t + "." + raw));
+      verified = sigs.some((x) => safeEqual(want, String(x).toLowerCase()));
+    }
+  } else if (gateway === "cashfree") {
+    const ts = h("x-webhook-timestamp"), sig = h("x-webhook-signature");
+    verified = !!ts && !!sig && safeEqual(b64(await hmacRaw(secret, ts + raw)), sig);
+  } else {
+    verified = safeEqual(h("X-ChatVoice-Secret"), secret) || (!!body && typeof body.secret === "string" && safeEqual(body.secret, secret));
+  }
+  if (!verified) return json({ error: "bad signature" }, 400);
+  if (!body) return json({ error: "bad json" }, 400);
+
+  if (gateway === "razorpay") {
+    if (body.event !== "payment.captured") return json({ ok: true, ignored: body.event || "unknown" });
+    const pay = body.payload && body.payload.payment && body.payload.payment.entity;
+    if (!pay || !pay.id) return json({ ok: true, ignored: "no payment" });
+    result = { tip: parseRazorpay(pay) };
+  } else if (gateway === "stripe") result = parseStripe(body);
+  else if (gateway === "cashfree") result = parseCashfree(body);
+  else result = parseGeneric(body);
+  if (!result.tip) return json({ ok: true, ignored: result.ignored });
+
+  const t = result.tip;
   const d = await db(env);
   await d.prepare("INSERT OR IGNORE INTO tips (guild, pay_id, ts, name, message, amount, currency, display) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
     .bind(guildId, t.id, Math.floor(Date.now() / 1000), t.name, t.message, t.value, t.currency, t.display).run();
@@ -322,8 +428,11 @@ async function api(request, env, url) {
   const body = request.method === "GET" ? {} : await request.json().catch(() => ({}));
 
   const publicConfig = () => {
-    const { razorpaySecret, hookId, ...rest } = guild.config || {};
-    return { ...rest, hasRazorpaySecret: !!razorpaySecret, hookUrl: hookId ? url.origin + "/hook/razorpay/" + hookId : "" };
+    const { razorpaySecret, stripeSecret, cashfreeSecret, genericSecret, hookId, ...rest } = guild.config || {};
+    const hookUrls = {};
+    for (const g of GATEWAYS) hookUrls[g] = hookId ? url.origin + "/hook/" + g + "/" + hookId : "";
+    return { ...rest, hasRazorpaySecret: !!razorpaySecret, hasStripeSecret: !!stripeSecret, hasCashfreeSecret: !!cashfreeSecret,
+      hasGenericSecret: !!genericSecret, hookUrl: hookUrls.razorpay, hookUrls };
   };
 
   if (route === "GET /api/config") return json({ guildId, guildName: guild.guildName, config: publicConfig() });
@@ -351,9 +460,13 @@ async function api(request, env, url) {
       if (rules.length && !has) await kvPut(env, "idx:invites", [...idx, guildId]);
       if (!rules.length && has) await kvPut(env, "idx:invites", idx.filter((x) => x !== guildId));
     }
-    if (typeof body.razorpaySecret === "string" && body.razorpaySecret.trim()) guild.config.razorpaySecret = body.razorpaySecret.trim().slice(0, 200);
+    for (const g of GATEWAYS) {
+      const v = body[g + "Secret"];
+      if (typeof v === "string" && v.trim()) guild.config[g + "Secret"] = v.trim().slice(0, 200);
+    }
     if (body.clearRazorpay) delete guild.config.razorpaySecret;
-    if (guild.config.razorpaySecret && !guild.config.hookId) {
+    if (GATEWAYS.includes(body.clearGateway)) delete guild.config[body.clearGateway + "Secret"];
+    if (GATEWAYS.some((g) => guild.config[g + "Secret"]) && !guild.config.hookId) {
       guild.config.hookId = newToken().slice(0, 24);
       await kvPut(env, "hook:" + guild.config.hookId, guildId);
     }
@@ -429,7 +542,10 @@ async function route(request, env, url) {
       ? json({ error: "cloud not set up: missing " + missing.join(", ") }, 500)
       : page("Cloud setup incomplete", "<p>These settings are missing on the cloud server:</p><code>" + esc(missing.join(", ")) +
           "</code><p>Add them with <code>npx wrangler secret put NAME</code>, then run <code>npx wrangler deploy</code>.</p>", 500);
-  if (request.method === "POST" && p.startsWith("/hook/razorpay/")) return razorpayHook(request, env, p.slice(15));
+  if (request.method === "POST" && p.startsWith("/hook/")) {
+    const [, , gw, id] = p.split("/");
+    if (GATEWAYS.includes(gw) && id) return paymentHook(request, env, gw, id);
+  }
   if (p === "/setup") return setupStart(env, origin);
   if (p === "/setup/callback") return setupCallback(env, origin, url);
   if (p === "/link/callback") return linkCallback(env, origin, url);

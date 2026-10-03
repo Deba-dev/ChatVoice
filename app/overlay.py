@@ -1,0 +1,102 @@
+"""A tiny local web server (127.0.0.1 only) that OBS shows as a Browser Source: alerts and chat on screen."""
+import json
+import os
+import re
+import threading
+import urllib.parse
+from collections import deque
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+from .overlay_html import INDEX, page
+
+
+class Overlay:
+    def __init__(self, settings, fonts_dir, cfg_fn):
+        self.s, self.fonts_dir, self.cfg_fn = settings, fonts_dir, cfg_fn
+        self.port = 0
+        self.server = None
+        self.error = ""
+        self.lock = threading.Lock()
+        self.next_id = 1
+        self.events = {"alert": deque(maxlen=60), "chat": deque(maxlen=60)}
+
+    # ----- data -----
+    def push(self, kind, data):
+        with self.lock:
+            ev = dict(data, id=self.next_id)
+            self.next_id += 1
+            self.events[kind].append(ev)
+            return ev["id"]
+
+    def poll(self, kind, after):
+        with self.lock:
+            latest = self.next_id - 1
+            evs = [] if after < 0 else [e for e in self.events[kind] if e["id"] > after]
+        return {"events": evs, "latest": latest, "cfg": self.cfg_fn()}
+
+    def url(self, kind):
+        return "http://127.0.0.1:%d/%s" % (self.port, kind) if self.port else ""
+
+    # ----- server -----
+    def start(self):
+        overlay = self
+
+        class Handler(BaseHTTPRequestHandler):
+            def log_message(self, *a):
+                pass
+
+            def _send(self, code, body, ctype):
+                data = body if isinstance(body, bytes) else body.encode("utf-8")
+                self.send_response(code)
+                self.send_header("Content-Type", ctype)
+                self.send_header("Content-Length", str(len(data)))
+                self.send_header("Cache-Control", "no-store")
+                self.end_headers()
+                self.wfile.write(data)
+
+            def do_GET(self):
+                u = urllib.parse.urlparse(self.path)
+                if u.path in ("/", ""):
+                    return self._send(200, INDEX, "text/html; charset=utf-8")
+                if u.path in ("/alert", "/chat"):
+                    return self._send(200, page(u.path[1:]), "text/html; charset=utf-8")
+                if u.path == "/poll":
+                    q = urllib.parse.parse_qs(u.query)
+                    kind = q.get("type", ["alert"])[0]
+                    try:
+                        after = int(q.get("after", ["-1"])[0])
+                    except ValueError:
+                        after = -1
+                    if kind not in overlay.events:
+                        return self._send(400, "{}", "application/json")
+                    return self._send(200, json.dumps(overlay.poll(kind, after)), "application/json")
+                m = re.fullmatch(r"/fonts/(Poppins-[A-Za-z]+\.ttf)", u.path)
+                if m:
+                    f = os.path.join(overlay.fonts_dir, m.group(1))
+                    if os.path.isfile(f):
+                        with open(f, "rb") as fh:
+                            return self._send(200, fh.read(), "font/ttf")
+                self._send(404, "not found", "text/plain")
+
+        start = int(self.s.get("ov_port"))
+        for port in range(start, start + 25):
+            try:
+                self.server = ThreadingHTTPServer(("127.0.0.1", port), Handler)
+                self.server.daemon_threads = True
+                break
+            except OSError:
+                continue
+        if not self.server:
+            self.error = "Could not open a local port for the overlays"
+            return False
+        self.port = self.server.server_address[1]
+        if self.port != start:
+            self.s.set("ov_port", self.port)
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+        return True
+
+    def stop(self):
+        if self.server:
+            self.server.shutdown()
+            self.server.server_close()
+            self.server = None

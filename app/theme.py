@@ -21,7 +21,7 @@ QFrame#side { background: rgba(255,255,255,0.035); border-right: 1px solid rgba(
 QLabel#logo { font-size: 20px; font-weight: 700; padding: 4px 0 14px 6px; }
 QLabel#title { font-size: 24px; font-weight: 700; }
 QLabel#sub, QLabel#hint { color: $mute; }
-QPushButton#nav { text-align: left; padding: 11px 16px; border: none; border-left: 4px solid transparent; margin: 2px 10px 2px 0;
+QPushButton#nav { text-align: left; padding: 9px 16px; border: none; border-left: 4px solid transparent; margin: 2px 10px 2px 0;
     background: transparent; color: $mute; border-radius: 0 14px 14px 0; font-size: 14px; font-weight: 500; }
 QPushButton#nav:hover { background: rgba(255,255,255,0.07); color: $text; }
 QPushButton#nav:checked { color: #ffffff; border-left: 4px solid $a3; font-weight: 600;
@@ -47,6 +47,9 @@ QCheckBox { spacing: 9px; }
 QCheckBox::indicator { width: 20px; height: 20px; border-radius: 7px; border: 1px solid rgba(255,255,255,0.28); background: rgba(0,0,0,0.30); }
 QCheckBox::indicator:hover { border: 1px solid $a2; }
 QCheckBox::indicator:checked { border: none; background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 $a1, stop:1 $a2); }
+QFrame#banner { border-radius: 14px; border: 1px solid rgba(255,255,255,0.25);
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 $a1, stop:1 $a2); }
+QFrame#banner QLabel { color: #ffffff; font-weight: 600; }
 QLabel#live { color: #ffffff; font-weight: 700; padding: 4px 12px; background: #ff3d6e; border-radius: 12px; }
 QScrollBar:vertical { background: transparent; width: 9px; }
 QScrollBar::handle:vertical { background: rgba(255,255,255,0.22); border-radius: 4px; min-height: 28px; }

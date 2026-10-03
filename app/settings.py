@@ -2,6 +2,10 @@
 import json
 import os
 
+from .secure import protect, unprotect
+
+SECRET_KEYS = ("cloud_token", "g_client_secret")   # stored encrypted on Windows
+
 
 def data_dir():
     base = os.environ.get("APPDATA") or os.path.expanduser("~/.config")
@@ -20,7 +24,8 @@ DEFAULTS = {
     "inv_youtube": "", "inv_twitch": "", "inv_kick": "", "inv_role_youtube": "", "inv_role_twitch": "", "inv_role_kick": "",
     "cloud_url": "", "cloud_token": "", "guild_id": "", "guild_name": "", "webhook_url": "",
     "announce_auto": False, "announce_text": "I'm live! Come hang out", "post_super": False,
-    "tips_on": False, "tip_min": 20, "tip_cursor": None, "g_client_id": "", "g_client_secret": "",
+    "pay_gateway": "razorpay", "ov_port": 8765, "ov_seconds": 8, "ov_show_message": True, "ov_sound": False, "ov_chat_seconds": 20,
+    "update_repo": "Deba-dev/ChatVoice", "auto_update_check": True, "update_last": 0, "tips_on": False, "tip_min": 20, "tip_cursor": None, "g_client_id": "", "g_client_secret": "",
     "mod_del_blocked": True, "mod_del_links": True, "mod_del_spam": False, "mod_dry_run": True, "mod_budget": 60,
     "mod_timeout_after": 3, "mod_timeout_secs": 300, "yt_actions_date": "", "yt_actions_count": 0,
     "role_verified": "", "role_regular": "", "role_supporter": "", "regular_msgs": 50, "dedupe_secs": 20, "user_cooldown": 4, "queue_max": 6,
@@ -33,7 +38,11 @@ class Settings:
         self.data = dict(DEFAULTS)
         try:
             with open(self.path, encoding="utf-8") as f:
-                self.data.update(json.load(f))
+                loaded = json.load(f)
+            for k in SECRET_KEYS:
+                if k in loaded:
+                    loaded[k] = unprotect(loaded[k])
+            self.data.update(loaded)
         except Exception:
             pass
 
@@ -44,6 +53,9 @@ class Settings:
         self.data[key] = value
         try:
             with open(self.path, "w", encoding="utf-8") as f:
-                json.dump(self.data, f, indent=2, ensure_ascii=False)
+                out = dict(self.data)
+                for k in SECRET_KEYS:
+                    out[k] = protect(out.get(k, ""))
+                json.dump(out, f, indent=2, ensure_ascii=False)
         except Exception:
             pass

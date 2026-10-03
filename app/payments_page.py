@@ -1,9 +1,25 @@
 """Payments page: connect the streamer's Razorpay webhook and choose how payments are read."""
 from PySide6.QtGui import QGuiApplication
-from PySide6.QtWidgets import QCheckBox, QFrame, QLabel, QLineEdit, QPushButton, QScrollArea, QSpinBox, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QCheckBox, QComboBox, QFrame, QLabel, QLineEdit, QPushButton, QScrollArea, QSpinBox, QVBoxLayout, QWidget
 
 from .discord import run_bg
 from .discord_page import _card, _row
+
+
+GATEWAYS = {
+    "razorpay": ("Razorpay", "Razorpay webhook secret (you choose it in the Razorpay dashboard)",
+                 "Razorpay > Settings > Webhooks > Add: paste this address and the SAME secret, tick only the event payment.captured. "
+                 "On your Payment Page add two fields labelled Name and Message."),
+    "stripe": ("Stripe", "Stripe signing secret (starts with whsec_)",
+               "Stripe Dashboard > Developers > Webhooks > Add endpoint: paste this address, choose the event checkout.session.completed, "
+               "then paste the endpoint's signing secret here. On your Payment Link add custom fields labelled Name and Message."),
+    "cashfree": ("Cashfree", "Cashfree secret key",
+                 "Cashfree Dashboard > Developers > Webhooks: paste this address. The secret is your Payment Gateway secret key. "
+                 "Add Name and Message fields to your payment form. (Field names are not confirmed yet - see PAYMENTS-SETUP.txt.)"),
+    "generic": ("Any other tool (Zapier, Make, n8n, Google Apps Script...)", "A secret you choose",
+                'Send a POST with JSON {"name":"...","message":"...","amount":100,"currency":"INR"} to this address, with the header '
+                "X-ChatVoice-Secret set to your secret (or put it in the JSON as \"secret\")."),
+}
 
 
 class PaymentsPage(QScrollArea):
@@ -20,12 +36,18 @@ class PaymentsPage(QScrollArea):
         lay.setSpacing(14)
 
         c, cl = _card("1.  Connect your payment page",
-                      "Viewers pay on a payment page in YOUR OWN Razorpay account (money goes straight to you). "
-                      "Razorpay tells ChatVoice, and ChatVoice reads the name, amount and message aloud. "
+                      "Viewers pay on a payment page in YOUR OWN payment account (money goes straight to you). "
+                      "Your payment service tells ChatVoice, and ChatVoice reads the name, amount and message aloud. "
                       "Do the Discord page first: payments use the same server connection.")
+        self.cfg = {}
+        self.gw = QComboBox()
+        for key, (label, _, _) in GATEWAYS.items():
+            self.gw.addItem(label, key)
+        self.gw.setCurrentIndex(max(0, self.gw.findData(self.s.get("pay_gateway"))))
+        self.gw.currentIndexChanged.connect(self._gateway_changed)
+        cl.addWidget(self.gw)
         self.secret = QLineEdit()
         self.secret.setEchoMode(QLineEdit.Password)
-        self.secret.setPlaceholderText("Razorpay webhook secret (you choose it in the Razorpay dashboard)")
         save = QPushButton("Save secret")
         save.setObjectName("primary")
         save.clicked.connect(self.save_secret)
@@ -40,12 +62,16 @@ class PaymentsPage(QScrollArea):
         self.hook.setPlaceholderText("Webhook address appears here after you save the secret")
         copy = QPushButton("Copy")
         copy.clicked.connect(lambda: QGuiApplication.clipboard().setText(self.hook.text()))
-        cl.addWidget(QLabel("Paste this address into Razorpay > Settings > Webhooks (event: payment.captured):"))
+        self.how = QLabel()
+        self.how.setObjectName("hint")
+        self.how.setWordWrap(True)
+        cl.addWidget(self.how)
         cl.addWidget(_row(self.hook, copy))
+        self._gateway_changed()
         lay.addWidget(c)
 
         c, cl = _card("2.  Reading payments aloud",
-                      "On your payment page, add two fields: 'Name' and 'Message'. ChatVoice finds them by their labels.")
+                      "On your payment page, add two fields labelled 'Name' and 'Message'. ChatVoice finds them by their labels.")
         on = QCheckBox("Listen for payments and read them aloud")
         on.setChecked(bool(self.s.get("tips_on")))
         on.toggled.connect(self._toggle)
@@ -75,6 +101,19 @@ class PaymentsPage(QScrollArea):
         self.s.set("tips_on", v)
         self.poller.apply()
 
+    def _gateway_changed(self):
+        key = self.gw.currentData()
+        self.s.set("pay_gateway", key)
+        self.secret.setPlaceholderText(GATEWAYS[key][1])
+        self.how.setText(GATEWAYS[key][2])
+        self._show_cfg()
+
+    def _show_cfg(self):
+        key = self.gw.currentData()
+        self.hook.setText((self.cfg.get("hookUrls") or {}).get(key, ""))
+        if self.cfg:
+            self.state.setText("Secret saved on server" if self.cfg.get("has%sSecret" % key.capitalize()) else "No secret saved yet")
+
     def refresh(self):
         self.state.setText("Checking...")
         run_bg(self.bridge, "pay:cfg", lambda: self.cloud.call("GET", "/api/config"))
@@ -85,7 +124,8 @@ class PaymentsPage(QScrollArea):
             self.state.setText("Type the secret first")
             return
         self.state.setText("Saving...")
-        run_bg(self.bridge, "pay:save", lambda: self.cloud.call("PUT", "/api/config", {"razorpaySecret": text}))
+        field = self.gw.currentData() + "Secret"
+        run_bg(self.bridge, "pay:save", lambda: self.cloud.call("PUT", "/api/config", {field: text}))
 
     def test_tip(self):
         self.poller.tip.emit({"name": "Rahul", "message": "Great stream bhai, keep it up!", "value": 100.0,
@@ -97,10 +137,8 @@ class PaymentsPage(QScrollArea):
         if res.get("error"):
             self.state.setText(res["error"])
             return
-        cfg = res.get("config", {})
-        self.hook.setText(cfg.get("hookUrl", ""))
+        self.cfg = res.get("config", {})
+        self._show_cfg()
         if tag == "pay:save":
             self.secret.clear()
-            self.state.setText("Saved. Now add the address below in Razorpay.")
-        else:
-            self.state.setText("Secret saved on server" if cfg.get("hasRazorpaySecret") else "No secret saved yet")
+            self.state.setText("Saved. Now add the address below in your payment service.")

@@ -24,7 +24,7 @@ C. DOWNLOAD
 2. Unzip it: inside is ChatVoice-Setup.exe. That is the installer you give to friends.
 3. Run it. Windows may show "Windows protected your PC": click More info > Run anyway (it is unsigned; a signing certificate costs money).
 
-D. NEXT VERSIONS
+D. NEXT VERSIONS  (full steps in UPDATING.txt)
 Change the files, commit and push in GitHub Desktop, then run the workflow again (step B). To get a permanent download page,
 create a tag like v0.4 (GitHub Desktop: History > right-click a commit > Create tag) and push it; the workflow also runs on tags.
 

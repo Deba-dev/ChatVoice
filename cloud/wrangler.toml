@@ -9,7 +9,7 @@ crons = ["*/2 * * * *"]
 # Run:  npx wrangler kv namespace create KV   and paste the printed id below
 [[kv_namespaces]]
 binding = "KV"
-id = "iesp6eyyoawxdfqpzzy0s7s0b957kikc61emxh13"
+id = "PASTE_KV_ID_HERE"
 
 # Payment alerts database. Run:  npx wrangler d1 create chatvoice  and paste the printed id below
 [[d1_databases]]

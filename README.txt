@@ -1,6 +1,8 @@
-ChatVoice  -  full project (v0.3)
+ChatVoice (BETA)  -  Phase 4  -  v0.4.0
+Created by itsmeblitz
 Reads YouTube, Twitch and Kick chat aloud in Hindi / Hinglish / English, with moderation, Discord roles,
-payment alerts from the streamer's own Razorpay, and YouTube message deleting.
+payment alerts from the streamer's own payment page (Razorpay, Stripe, Cashfree or any tool), YouTube message deleting,
+OBS overlays (alerts and chat on screen) and one-click self-updates.
 
 WHAT IS INSIDE
   main.py, app\           the Windows app (Python + PySide6)
@@ -11,6 +13,8 @@ WHAT IS INSIDE
   PAYMENTS-SETUP.txt      Razorpay payment page and webhook
   YT-MODERATION-SETUP.txt Google sign-in for deleting YouTube messages
   GITHUB-BUILD-GUIDE.txt  turn the project into ChatVoice-Setup.exe, free
+  UPDATING.txt            publish a new version; users update with one click
+  OBS-GUIDE.txt           voice, alerts and chat in OBS
 
 PAGES IN THE APP
   Connect     paste your YouTube link, Twitch and Kick channel, press Connect (no logins needed to read chat)
@@ -18,8 +22,9 @@ PAGES IN THE APP
   Voice       voices, speed, volume, "different voice per viewer", Hinglish word list
   Moderation  what gets read aloud: link / command / bot / repeat filters, blocked words
   Discord     roles from invite links (recommended), chat-activity roles, announcements
-  Payments    Razorpay payment alerts read aloud
+  Payments    payment alerts read aloud (Razorpay / Stripe / Cashfree / any tool)
   YouTube mod sign in with Google to delete messages and time out repeat offenders
+  OBS overlays  addresses for OBS Browser sources: alert popups and chat on screen
   Sidebar     Theme (4 colour themes) and Lite mode (turns off glow/fade animations for weak PCs or gaming)
 
 RUN IT (easiest)

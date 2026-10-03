@@ -191,5 +191,58 @@ invitesStatus = 200;
 r = await call("/api/config", { method: "PUT", headers: H, body: JSON.stringify({ inviteRules: [] }) });
 puts.length = 0; await runCron(); ok(puts.length === 0, "with no invite roles the scheduled check does nothing");
 
+
+// 10. more gateways: Stripe, Cashfree, and a universal webhook for any other tool
+env.DB = new FakeDB();
+r = await call("/api/config", { method: "PUT", headers: H, body: JSON.stringify({ stripeSecret: "whsec_stripe", cashfreeSecret: "cf_secret", genericSecret: "my_generic_secret" }) });
+cfgRes = await r.json();
+ok(cfgRes.config.hasStripeSecret && cfgRes.config.hasCashfreeSecret && cfgRes.config.hasGenericSecret && ["razorpay", "stripe", "cashfree", "generic"].every((g) => cfgRes.config.hookUrls[g].includes("/hook/" + g + "/")), "one address per gateway is created");
+ok(!/whsec_stripe|cf_secret|my_generic_secret/.test(JSON.stringify(cfgRes)), "no gateway secret is ever sent back");
+const hp = (g) => new URL(cfgRes.config.hookUrls[g]).pathname;
+const base = (await events(-1)).latest;
+
+// Stripe
+const stripeEv = (id, over = {}) => JSON.stringify({ id: "evt_" + id, type: "checkout.session.completed", data: { object: { id, payment_status: "paid", amount_total: 500, currency: "usd",
+  customer_details: { name: "Card Holder" }, custom_fields: [{ key: "message", label: { custom: "Your message", type: "custom" }, type: "text", text: { value: "Hi from Stripe" } }, { key: "name", label: { custom: "Name", type: "custom" }, type: "text", text: { value: "Anna" } }], ...over } } });
+const stripeHdr = (body, t = Math.floor(Date.now() / 1000), secret = "whsec_stripe", extra = "") => ({ "Stripe-Signature": `t=${t},${extra}v1=${createHmac("sha256", secret).update(t + "." + body).digest("hex")}` });
+let body = stripeEv("cs_1");
+r = await call(hp("stripe"), { method: "POST", body, headers: stripeHdr(body) }); ok(r.status === 200, "Stripe: valid signature accepted");
+r = await call(hp("stripe"), { method: "POST", body, headers: stripeHdr(body, Math.floor(Date.now() / 1000) - 900) }); ok(r.status === 400, "Stripe: old timestamp rejected (replay protection)");
+r = await call(hp("stripe"), { method: "POST", body, headers: stripeHdr(body, undefined, "wrong") }); ok(r.status === 400, "Stripe: wrong secret rejected");
+body = stripeEv("cs_2");
+r = await call(hp("stripe"), { method: "POST", body, headers: stripeHdr(body, undefined, "whsec_stripe", "v1=deadbeef,") }); ok(r.status === 200, "Stripe: accepted when one of several v1 signatures matches");
+body = stripeEv("cs_3", { payment_status: "unpaid" });
+r = await call(hp("stripe"), { method: "POST", body, headers: stripeHdr(body) }); res = await r.json(); ok(res.ignored === "not paid yet", "Stripe: unpaid sessions are ignored");
+body = stripeEv("cs_4", { amount_total: 500, currency: "jpy", custom_fields: [] });
+r = await call(hp("stripe"), { method: "POST", body, headers: stripeHdr(body) }); ok(r.status === 200, "Stripe: payment without custom fields accepted");
+body = JSON.stringify({ type: "charge.refunded", data: { object: {} } });
+r = await call(hp("stripe"), { method: "POST", body, headers: stripeHdr(body) }); res = await r.json(); ok(res.ignored === "charge.refunded", "Stripe: other events ignored");
+
+// Cashfree (signature = base64 of HMAC(timestamp + body))
+const cfBody = (id, over = {}) => JSON.stringify({ type: "PAYMENT_SUCCESS_WEBHOOK", data: { order: { order_id: id, order_amount: 100.0, order_currency: "INR", order_note: "Nice stream" }, payment: { cf_payment_id: 555 }, customer_details: { customer_name: "Sam" } }, ...over });
+const cfHdr = (body, secret = "cf_secret", ts = String(Date.now())) => ({ "x-webhook-timestamp": ts, "x-webhook-signature": createHmac("sha256", secret).update(ts + body).digest("base64") });
+body = cfBody("order_1");
+r = await call(hp("cashfree"), { method: "POST", body, headers: cfHdr(body) }); ok(r.status === 200, "Cashfree: valid signature accepted");
+r = await call(hp("cashfree"), { method: "POST", body, headers: cfHdr(body, "bad") }); ok(r.status === 400, "Cashfree: wrong secret rejected");
+body = cfBody("order_2", { type: "PAYMENT_FAILED_WEBHOOK" });
+r = await call(hp("cashfree"), { method: "POST", body, headers: cfHdr(body) }); res = await r.json(); ok(res.ignored === "payment_failed_webhook", "Cashfree: failed payments ignored");
+
+// universal webhook
+const gen = (obj, hdr = {}) => call(hp("generic"), { method: "POST", body: JSON.stringify(obj), headers: hdr });
+r = await gen({ id: "g1", name: "Zed", message: "via any tool", amount: 75, currency: "INR" }, { "X-ChatVoice-Secret": "my_generic_secret" }); ok(r.status === 200, "Universal: secret in header accepted");
+r = await gen({ id: "g2", name: "Yo", message: "secret in body", amount: 10.5, secret: "my_generic_secret" }); ok(r.status === 200, "Universal: secret in body accepted");
+r = await gen({ id: "g3", name: "Nope", amount: 10 }, { "X-ChatVoice-Secret": "wrong" }); ok(r.status === 400, "Universal: wrong secret rejected");
+r = await gen({ id: "g4", name: "NoAmount", secret: "my_generic_secret" }); res = await r.json(); ok(res.ignored === "no amount", "Universal: missing amount ignored");
+r = await gen({ id: "g1", name: "Zed", message: "via any tool", amount: 75, currency: "INR" }, { "X-ChatVoice-Secret": "my_generic_secret" }); ok(r.status === 200, "Universal: duplicate id accepted but not queued twice");
+
+// the queue
+ev = await events(base);
+const by = (id) => ev.events.find((e) => e.id === id);
+ok(ev.events.length === 6, "all valid payments queued exactly once (6)");
+ok(by("cs_1").name === "Anna" && by("cs_1").message === "Hi from Stripe" && by("cs_1").display === "$5", "Stripe: name and message from custom fields, $5");
+ok(by("cs_4").name === "Card Holder" && by("cs_4").display === "JPY 500", "Stripe: falls back to card holder name; yen has no cents");
+ok(by("order_1") === undefined && ev.events.some((e) => e.id === "555" && e.name === "Sam" && e.message === "Nice stream" && e.display === "₹100"), "Cashfree: name, note and ₹100 found");
+ok(by("g1").display === "₹75" && by("g2").display === "₹10.50" && by("g2").message === "secret in body", "Universal: amounts and messages read correctly");
+
 console.log(fails ? `\n${fails} FAILED` : "\nALL PASSED");
 process.exit(fails ? 1 : 0);

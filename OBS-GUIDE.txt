@@ -1,0 +1,25 @@
+USING CHATVOICE WITH OBS
+ChatVoice is a normal window. OBS uses it in three ways. Start ChatVoice BEFORE you go live and keep it running (minimised is fine).
+
+1. THE VOICE (audio)
+   OBS: Sources > + > "Application Audio Capture" > pick ChatVoice.  (Windows 10 version 2004+, OBS 28+.)
+   If that source is missing, use "Desktop Audio" instead. Wear headphones, or your microphone will pick up the voice again.
+
+2. PAYMENT / SUPER CHAT ALERTS ON SCREEN
+   ChatVoice > "OBS overlays" page > copy the Alerts address (looks like http://127.0.0.1:8765/alert).
+   OBS: Sources > + > Browser > Create new > paste it in URL. Width 1280, Height 420. OK.
+   Put it at the top centre of your scene. It is invisible until an alert comes, then a card pops up with sparkles,
+   the sender, the amount and the message, in your theme's colours, one alert after another.
+   Use "Send a test alert" on that page to see it. Options: how long it stays, show/hide the message, a chime.
+
+3. CHAT ON SCREEN
+   Copy the Chat address (http://127.0.0.1:8765/chat). OBS: Sources > + > Browser, Width 520, Height 760.
+   Messages from YouTube, Twitch and Kick slide in with a coloured tag and fade away. Moderation applies: skipped
+   messages never show.
+
+NOTES
+- The addresses only work on the PC that runs ChatVoice, and only while ChatVoice is open.
+- If port 8765 is busy, ChatVoice uses the next free one and shows the new addresses on the page: copy them again.
+- Leave "Shutdown source when not visible" and "Refresh browser when scene becomes active" unticked.
+- Hindi text works. The overlay uses the same Poppins font as the app.
+- Old alerts are never replayed when you reload the Browser source.

@@ -1,0 +1,40 @@
+HOW TO UPDATE THE APP WITH NEW FEATURES
+
+The idea: you publish a new version on GitHub once; every installed ChatVoice shows "A new version is available"
+and updates itself with one click. Settings, keys and counters are kept (they live in %APPDATA%\ChatVoice).
+
+A. PUBLISH A NEW VERSION  (you, about 15 minutes, no tools needed)
+1. Get the new project files (from me, or your own edits) and put them in your GitHub repository.
+   - GitHub Desktop: unzip the new project over your local ChatVoice folder (replace files), then in GitHub Desktop write a
+     short message, click "Commit to main", then "Push origin".
+   - Or on github.com: Add file > Upload files, drag the changed files/folders in, Commit.
+     (The hidden folder .github is skipped by the web uploader. Only needed if the workflow changed: open
+     .github/workflows/build.yml on github.com, click the pencil, paste the new text, commit.)
+2. Make sure the version number went UP. In app/version.py set PHASE, VERSION (for example "0.4.1") and STAGE ("BETA" now,
+   later "STABLE" or empty). The app shows it as "Phase 4 . v0.4.1 (BETA)". VERSION is the number the updater compares.
+   For Windows' own labels also change the same number in installer.iss (AppVersion, AppVerName, VersionInfoVersion) and
+   version_info.txt. The project I send you already has all of them in step.
+3. On github.com open your repository > "Releases" (right side) > "Draft a new release".
+   - "Choose a tag": type  v0.4.1  (the same number as VERSION, with a v in front) > "Create new tag on publish".
+   - Title: anything. Write what is new in the description (installed apps show the first lines).
+   - Click "Publish release".
+4. Open the Actions tab: "Build ChatVoice" is running (5-10 minutes). When it turns green, the release has
+   ChatVoice-Setup.exe attached. Done.
+
+B. WHAT YOUR USERS SEE
+- Within a day (or when they click "Check for updates" in the sidebar) a banner appears: "A new version is available".
+- "Update now" downloads the installer, checks it, installs it quietly and restarts ChatVoice. Nothing to uninstall.
+- They can also just download ChatVoice-Setup.exe from the release page and run it; it installs over the old version.
+
+C. THE CLOUD PART (Discord, payments) IS SEPARATE
+When the files in the cloud folder change, run this once in that folder:   npx wrangler deploy
+Your secrets and data stay. Do the cloud update BEFORE you publish an app version that needs it.
+
+D. GOOD TO KNOW
+- The very first installation (v0.4.0) is manual. Updates are automatic from then on.
+- The repository must stay public so installed apps can see releases without a login.
+- The updater only accepts files from YOUR repository's releases, and checks GitHub's checksum when GitHub provides one.
+- If the repository name is different from Deba-dev/ChatVoice, change "update_repo" in %APPDATA%\ChatVoice\settings.json
+  (or tell me and I will change the default).
+- Windows may still show the "unknown publisher" warning on a first manual install because the app is not code-signed.
+  Updates started from inside the app do not show it.

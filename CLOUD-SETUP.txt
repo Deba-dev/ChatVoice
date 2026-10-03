@@ -58,7 +58,7 @@ LIMITS OF INVITE ROLES (honest version)
 - Invites that expire or hit a use limit disappear and cannot be tracked. Use "never expire / no limit".
 - Servers with more than 5,000 members are not fully scanned.
 
-PAYMENTS: see PAYMENTS-SETUP.txt.   YOUTUBE DELETING MESSAGES: see YT-MODERATION-SETUP.txt.
+PAYMENTS (Razorpay, Stripe, Cashfree or any tool): see PAYMENTS-SETUP.txt.   YOUTUBE DELETING MESSAGES: see YT-MODERATION-SETUP.txt.
 
 TROUBLESHOOTING
 - /health shows false for something: set that secret again with  npx wrangler secret put NAME  then  npx wrangler deploy

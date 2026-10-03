@@ -25,7 +25,7 @@ class Cloud(BaseHTTPRequestHandler):
         u = urllib.parse.urlparse(self.path); q = urllib.parse.parse_qs(u.query)
         if u.path == "/api/roles": self.send({"roles": [{"id": "100003", "name": "Supporter"}, {"id": "100001", "name": "YouTube Viewer"}, {"id": "100002", "name": "Regular"}]})
         elif u.path == "/api/links": self.send({"keys": list(C["links"])})
-        elif u.path == "/api/config": self.send({"guildId": "G1", "guildName": "Srv", "config": {"hasRazorpaySecret": bool(C.get("secret")), "hookUrl": "https://cv.example/hook/razorpay/abc" if C.get("secret") else "", "inviteRules": C.get("invite_rules", [])}})
+        elif u.path == "/api/config": self.send({"guildId": "G1", "guildName": "Srv", "config": {"hasStripeSecret": "stripe" in C.get("gw", set()), "hasGenericSecret": "generic" in C.get("gw", set()), "hasCashfreeSecret": False, "hookUrls": {g: "https://cv.example/hook/%s/abc" % g for g in ("razorpay", "stripe", "cashfree", "generic")} if (C.get("secret") or C.get("gw")) else {}, "hasRazorpaySecret": bool(C.get("secret")), "hookUrl": "https://cv.example/hook/razorpay/abc" if C.get("secret") else "", "inviteRules": C.get("invite_rules", [])}})
         elif u.path == "/api/events":
             after = int(q["after"][0]); latest = max([t["seq"] for t in C["tips"]] or [0])
             self.send({"events": [], "latest": latest} if after < 0 else {"events": [t for t in C["tips"] if t["seq"] > after], "latest": latest})
@@ -35,7 +35,10 @@ class Cloud(BaseHTTPRequestHandler):
         b = self.body(); C["config_puts"].append(b)
         if "inviteRules" in b: C["invite_rules"] = [dict(r, code=r["code"].split("/")[-1]) for r in b["inviteRules"]]
         if b.get("razorpaySecret"): C["secret"] = b["razorpaySecret"]
-        self.send({"ok": True, "config": {"hasRazorpaySecret": True, "hookUrl": "https://cv.example/hook/razorpay/abc"}})
+        for g in ("stripe", "generic", "cashfree"):
+            if b.get(g + "Secret"): C.setdefault("gw", set()).add(g)
+        self.send({"ok": True, "config": {"hasRazorpaySecret": bool(C.get("secret")), "hasStripeSecret": "stripe" in C.get("gw", set()), "hasGenericSecret": "generic" in C.get("gw", set()), "hasCashfreeSecret": False,
+                                          "hookUrl": "https://cv.example/hook/razorpay/abc", "hookUrls": {g: "https://cv.example/hook/%s/abc" % g for g in ("razorpay", "stripe", "cashfree", "generic")}}})
     def do_POST(self):
         b = self.body()
         if self.path == "/api/invites/check":
@@ -188,13 +191,112 @@ for name in THEMES:
     ok(THEMES[name]["a1"] in w.styleSheet() and w.s.get("theme") == name, "theme '%s' applied and remembered" % name)
 w.apply_theme("Sunset"); w.goto(0); wait(120); w.grab().save(os.path.join(os.environ["APPDATA"], "sunset_connect.png")); wait(500)
 w.apply_theme("Neon Violet"); w.goto(4); wait(150); w.grab().save(os.path.join(os.environ["APPDATA"], "violet_discord_midanim.png")); wait(600); w.grab().save(os.path.join(os.environ["APPDATA"], "violet_discord.png"))
-for i in range(7): w.goto(i); wait(60); w.grab()
-ok(True, "all 7 pages animate and render (cards fading in around buttons with glow effects) without errors")
+for i in range(8): w.goto(i); wait(60); w.grab()
+ok(True, "all 8 pages animate and render (cards fading in around buttons with glow effects) without errors")
 n = len(w.fx.items); live = sum(1 for it in w.fx.items if it.effect is not None)
 ok(n > 10 and live == n, "%d buttons have the floating glow effect" % n)
 w._lite(True); wait(100); ok(all(it.effect is None for it in w.fx.items), "Lite mode removes every glow effect")
 w.goto(1); w.goto(5); ok(w.stack.currentIndex() == 5, "Lite mode: pages switch instantly")
 w._lite(False); wait(100); ok(all(it.effect is not None for it in w.fx.items), "turning Lite mode off brings the effects back")
 b = [it for it in w.fx.items][0]; b.go(30, 8, 100); wait(250); ok(b.effect.blurRadius() > 20, "hover animation grows the glow")
+
+# ===== E. OBS overlays =====
+print("--- E. OBS overlays ---")
+import app.overlay as _ov
+def ov(path):
+    return json.loads(urllib.request.urlopen("http://127.0.0.1:%d%s" % (w.overlay.port, path)).read())
+ok(w.overlay.port > 0 and b"data-mode=\"alert\"" in urllib.request.urlopen(w.overlay.url("alert")).read(), "overlay server runs and serves the alert page (%s)" % w.overlay.url("alert"))
+w.s.set("muted", True); w.s.set("read_super", True)
+start = ov("/poll?type=alert&after=-1")["latest"]
+w.mod.blocked = ["badword"]; w.s.set("tip_min", 20)
+w.on_message(Message("youtube", "Chatty", "namaste doston", uid="UCx"))
+w.on_message(Message("youtube", "Rude", "you badword", uid="UCy"))
+w.on_message(Message("youtube", "Donor", "keep going", "super", "₹200.00", uid="UCz"))
+w.on_tip({"name": "Rahul", "message": "tip message", "value": 100, "currency": "INR", "display": "₹100"})
+chat = ov("/poll?type=chat&after=%d" % start)["events"]; alerts = ov("/poll?type=alert&after=%d" % start)["events"]
+ok([c["name"] for c in chat] == ["Chatty", "Donor"], "chat overlay gets spoken messages only (blocked one and payment alert excluded)")
+ok([(a["name"], a["amount"], a["message"], a["platform"]) for a in alerts] == [("Donor", "₹200.00", "keep going", "youtube"), ("Rahul", "₹100", "tip message", "tip")], "alert overlay gets Super Chat and payment with amount and message")
+w.on_tip({"name": "Cheap", "message": "tiny", "value": 5, "currency": "INR", "display": "₹5"})
+ok(ov("/poll?type=alert&after=%d" % start)["events"][-1]["message"] == "", "alert for a payment below the minimum shows no message")
+w.s.set("ov_seconds", 12); w.apply_theme("Ocean")
+cfg = ov("/poll?type=alert&after=-1")["cfg"]
+ok(cfg["seconds"] == 12 and cfg["colors"]["a1"] == THEMES["Ocean"]["a1"] and cfg["showMessage"] is True, "options and theme colours reach OBS within a second")
+w.ovpage.alert_url.text(); n0 = ov("/poll?type=alert&after=-1")["latest"]
+w.ovpage.findChildren(__import__("PySide6.QtWidgets", fromlist=["QPushButton"]).QPushButton)
+for b in w.ovpage.findChildren(__import__("PySide6.QtWidgets", fromlist=["QPushButton"]).QPushButton):
+    if b.text() in ("Send a test alert", "Send a test chat message"): b.click()
+ok(ov("/poll?type=alert&after=%d" % n0)["events"][0]["name"] == "Rahul" and ov("/poll?type=chat&after=%d" % n0)["events"][0]["name"] == "Neha", "test buttons send a sample alert and chat line")
+w.apply_theme("Neon Violet")
+
+# ===== F. updates =====
+print("--- F. updates ---")
+import hashlib, app.updater as upd
+from app.version import VERSION
+ok(upd.parse_version("v0.10.0") > upd.parse_version("0.9.9") and upd.parse_version("v1") == (1, 0, 0) and upd.parse_version("0.4.0") == upd.parse_version(VERSION), "version numbers compare correctly (0.10 is newer than 0.9)")
+BLOB = b"MZ-fake-installer-bytes" * 5000
+GH = {"tag": "v9.9.9", "digest": "sha256:" + hashlib.sha256(BLOB).hexdigest(), "asset": "http://127.0.0.1:8813/dl/ChatVoice-Setup.exe"}
+class Gh(BaseHTTPRequestHandler):
+    def log_message(self, *a): pass
+    def do_GET(self):
+        if self.path.endswith("/releases/latest"):
+            b = json.dumps({"tag_name": GH["tag"], "html_url": "https://github.com/Deba-dev/ChatVoice/releases/tag/x", "body": "New things", "assets": [{"name": "ChatVoice-Setup.exe", "browser_download_url": GH["asset"], "digest": GH["digest"]}]}).encode()
+        elif self.path.startswith("/dl/"): b = BLOB
+        else: self.send_response(404); self.end_headers(); return
+        self.send_response(200); self.send_header("Content-Length", str(len(b))); self.end_headers(); self.wfile.write(b)
+ghs = ThreadingHTTPServer(("127.0.0.1", 8813), Gh); threading.Thread(target=ghs.serve_forever, daemon=True).start()
+upd.GH_API = "http://127.0.0.1:8813"; upd.DL_PREFIX = "http://127.0.0.1:8813/dl/"
+w.banner.hide(); w.updater.check(True); wait(900)
+ok(w.banner.isVisible() and "9.9.9" in w.banner_text.text() and w.pending_update["notes"] == "New things", "newer version -> banner appears")
+opened = []; import app.ui as _ui; _ui.QDesktopServices.openUrl = lambda u: opened.append(u.toString())
+w._update_now(); ok(opened and "github.com" in opened[0], "development copy: 'Update now' opens the download page instead")
+launched, quits = [], []
+w.updater.frozen = True; w.updater.launch = lambda path: launched.append(path); w.updater.quit_now.disconnect(); w.updater.quit_now.connect(lambda: quits.append(1))
+w.upd_btn.setEnabled(True); w._update_now(); wait(1500)
+ok(len(launched) == 1 and launched[0].endswith("ChatVoice-Setup-9.9.9.exe") and open(launched[0], "rb").read() == BLOB and quits == [1], "installed app: update downloaded, installer started, app closes itself")
+GH["digest"] = "sha256:" + "0" * 64; launched.clear(); w.updater.check(False); wait(700); w.pending_update and w.updater.install(w.pending_update); wait(1500)
+ok(not launched and "did not match" in w.feed.toPlainText(), "corrupted download (wrong checksum) is discarded, not run")
+w.updater.install({"version": "9.9.9", "asset": "http://evil.example/x.exe"}); wait(200)
+ok(not launched and "not from your GitHub repository" in w.feed.toPlainText(), "update file from anywhere except your repository is refused")
+GH["tag"] = "v0.0.1"; w.banner.hide(); w.updater.check(True); wait(800)
+ok(not w.banner.isVisible() and "newest version" in w.feed.toPlainText(), "already up to date -> no banner, friendly note")
+w.s.set("update_last", 0); w.s.set("auto_update_check", False); w.banner.hide(); GH["tag"] = "v9.9.9"; w._auto_update(); wait(400)
+ok(not w.banner.isVisible(), "automatic check can be switched off")
+
+# ===== G. protected secrets =====
+print("--- G. protected secrets ---")
+import app.secure as sec, app.settings as stg, sys as _sys
+ok(sec.protect("abc") == "abc" and sec.unprotect("abc") == "abc", "outside Windows secrets are stored as before")
+real = (sec._win_call, _sys.platform)
+sec._win_call = lambda data, protect: bytes(b ^ 0x5A for b in data); _sys.platform = "win32"
+enc = sec.protect("refresh-token-123"); dec = sec.unprotect(enc)
+sec._win_call, _sys.platform = real
+ok(enc.startswith("dpapi:") and "refresh-token-123" not in enc and dec == "refresh-token-123", "Windows path: encrypted form never contains the secret and decrypts back")
+ok(sec.unprotect("dpapi:%%%notbase64") == "", "damaged protected value reads as empty (user is asked to sign in again), no crash")
+stg_p, stg_u = stg.protect, stg.unprotect
+stg.protect = lambda x: ("dpapi:" + x[::-1]) if x else x; stg.unprotect = lambda x: x[6:][::-1] if isinstance(x, str) and x.startswith("dpapi:") else x
+sp = os.path.join(os.environ["APPDATA"], "sec_settings.json"); S = stg.Settings(sp); S.set("cloud_token", "KEY-SECRET"); S.set("g_client_secret", "GSEC"); S.set("youtube", "plain-value")
+raw = json.load(open(sp)); S2 = stg.Settings(sp)
+stg.protect, stg.unprotect = stg_p, stg_u
+ok(raw["cloud_token"].startswith("dpapi:") and "KEY-SECRET" not in open(sp).read() and raw["youtube"] == "plain-value" and S2.get("cloud_token") == "KEY-SECRET" and S2.get("g_client_secret") == "GSEC", "settings file keeps sign-in keys encrypted, other values readable, loads back correctly")
+
+# ===== H. payment gateway choice =====
+print("--- H. gateways ---")
+pg = w.payments; labels = [pg.gw.itemText(i) for i in range(pg.gw.count())]
+ok(len(labels) == 4 and "Stripe" in labels and any("Any other tool" in l for l in labels), "payments page offers Razorpay, Stripe, Cashfree and any other tool")
+pg.gw.setCurrentIndex(pg.gw.findData("stripe")); ok("whsec_" in pg.secret.placeholderText() and "checkout.session.completed" in pg.how.text(), "choosing Stripe shows Stripe's own instructions")
+pg.secret.setText("whsec_abc"); pg.save_secret(); wait(500)
+ok(C["config_puts"][-1] == {"stripeSecret": "whsec_abc"} and pg.hook.text().endswith("/hook/stripe/abc") and "saved" in pg.state.text().lower(), "Stripe secret saved on its own; Stripe address shown")
+pg.gw.setCurrentIndex(pg.gw.findData("generic")); ok(pg.hook.text().endswith("/hook/generic/abc") and "X-ChatVoice-Secret" in pg.how.text(), "switching to 'any other tool' shows its address and header")
+pg.gw.setCurrentIndex(pg.gw.findData("cashfree")); ok(pg.hook.text().endswith("/hook/cashfree/abc") and "No secret" in pg.state.text(), "gateway without a secret says so")
+
+# ===== I. creator credit and version label =====
+print("--- I. credit and version ---")
+from app.version import label, CREATOR, PHASE, STAGE
+from PySide6.QtWidgets import QLabel as _QL
+texts = [l.text() for l in w.findChildren(_QL)]
+ok(label() == "Phase %d \u00b7 v%s (BETA)" % (PHASE, VERSION) and STAGE == "BETA" and CREATOR == "itsmeblitz", "version label reads: %s" % label())
+ok(label() in texts and any("itsmeblitz" in x for x in texts), "sidebar shows the version label and 'by itsmeblitz'")
+ok("itsmeblitz" in w.windowTitle() and "BETA" in w.windowTitle(), "window title: %s" % w.windowTitle())
+ok(b"itsmeblitz" in urllib.request.urlopen("http://127.0.0.1:%d/" % w.overlay.port).read() if w.overlay.server else True, "overlay start page carries the credit")
 print("\nALL PASSED" if not fails else "\n%d FAILED" % fails)
 w.close()

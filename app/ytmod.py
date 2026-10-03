@@ -23,6 +23,7 @@ from PySide6.QtCore import QObject, QTimer, Signal
 from .discord import run_bg
 from .hinglish import EMOJI_RX, SHORTCODE_RX
 from .platforms import youtube_id
+from .secure import protect, unprotect
 from .settings import data_dir
 
 AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
@@ -77,6 +78,9 @@ class GoogleAuth:
         try:
             with open(self.path, encoding="utf-8") as f:
                 self.tok = json.load(f)
+            for k in ("access_token", "refresh_token"):
+                if k in self.tok:
+                    self.tok[k] = unprotect(self.tok[k])
         except Exception:
             pass
 
@@ -97,8 +101,12 @@ class GoogleAuth:
 
     def _save(self):
         try:
+            out = dict(self.tok)
+            for k in ("access_token", "refresh_token"):
+                if k in out:
+                    out[k] = protect(out[k])
             with open(self.path, "w", encoding="utf-8") as f:
-                json.dump(self.tok, f)
+                json.dump(out, f)
         except Exception:
             pass
 

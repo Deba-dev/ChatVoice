@@ -1,27 +1,44 @@
-PAYMENTS  -  viewers pay on the streamer's own Razorpay page, ChatVoice reads name, amount and message aloud
-Money goes straight from the viewer to the streamer's Razorpay account. Neither ChatVoice nor the cloud ever holds it.
+PAYMENTS  -  viewers pay on the streamer's OWN payment page; ChatVoice reads name, amount and message aloud
+and shows an alert in OBS. Money goes straight from the viewer to the streamer. ChatVoice and the cloud never hold it.
 
-DO FIRST: the Discord page (server key). Payments use the same connection. (The cloud needs the D1 step in CLOUD-SETUP.)
+Works with:  Razorpay, Stripe, Cashfree, and ANY other tool that can send a webhook (Zapier, Make, n8n, Google Apps Script...).
+Do FIRST: the Discord page (server key). Payments use the same connection. The cloud needs the D1 step in CLOUD-SETUP.txt.
 
-1. In Razorpay, make a Payment Page. Add two fields and label them exactly  Name  and  Message.
-   ChatVoice finds them by their labels (anything containing "name" and "message" works).
-2. In ChatVoice > Payments: type a secret you choose (any long random text), click "Save secret".
-   A webhook address appears. Click Copy.
-3. In Razorpay > Settings > Webhooks > Add: paste the address, paste the SAME secret, tick ONLY the event
-   "payment.captured". Save.
-4. Use Razorpay TEST MODE first. Make a test payment on your page. ChatVoice should say the name, amount and message.
-5. In ChatVoice tick "Listen for payments and read them aloud".
+SET UP (same for every gateway)
+1. ChatVoice > Payments > choose your gateway.
+2. Type the secret asked for (see the table) and click "Save secret". A webhook ADDRESS appears: click Copy.
+3. In your payment service, add that address as a webhook (see the table), using the same secret.
+4. Put two fields on your payment page, labelled  Name  and  Message  (ChatVoice finds them by their labels).
+5. Test in the service's TEST MODE. Then tick "Listen for payments and read them aloud".
+
+WHERE TO PUT IT
+  Razorpay : Settings > Webhooks > Add. Secret = the one you typed. Event: payment.captured (only).
+  Stripe   : Developers > Webhooks > Add endpoint. Event: checkout.session.completed. After saving, Stripe shows a
+             "signing secret" (whsec_...): paste THAT into ChatVoice. Add custom fields Name / Message to your Payment Link.
+  Cashfree : Developers > Webhooks. The secret is your Payment Gateway secret key. Works with payment success and
+             payment-form webhooks.
+  Any tool : send a POST with JSON to the address:  {"name":"Rahul","message":"Great stream","amount":100,"currency":"INR"}
+             with the header  X-ChatVoice-Secret: <your secret>   (or put  "secret":"..."  inside the JSON).
+             Optional "id" prevents the same payment being read twice.
+
+TEST THE WHOLE CHAIN WITHOUT ANY PAYMENT (Windows PowerShell), using the "Any other tool" address and secret:
+  Invoke-RestMethod -Method Post -Uri "ADDRESS" -Headers @{"X-ChatVoice-Secret"="YOURSECRET"} -ContentType "application/json" -Body '{"name":"Rahul","message":"Great stream bhai","amount":100,"currency":"INR"}'
+  Within about 10 seconds ChatVoice reads it aloud and the OBS alert pops up.
 
 HOW IT BEHAVES
-- "Send a test payment" in the app tests the voice only (it does not go through Razorpay).
-- A message with a blocked word is never read; the name and amount still are.
-- Under the minimum amount (INR only) the message is not read; name and amount still are.
-- The same payment is never read twice (Razorpay retries are ignored).
-- Alerts normally arrive within seconds.
+- A message with a blocked word is never read or shown; the name and amount still are.
+- INR payments below the minimum amount (Payments page) show/read the name and amount without the message.
+- The same payment is never read twice. Alerts normally arrive within about 10 seconds.
+- Amounts show as the currency symbol and number (₹100, $5). Currencies without cents (yen) are handled.
 
-HONEST LIMITS
-- I confirmed the signature check and the payment.captured event in Razorpay's documentation. I have NOT seen a real
-  payment from your page: where Razorpay puts the custom fields can differ by page type. If the name or message
-  does not show up in test mode, send me the webhook payload from the Razorpay dashboard and I will adjust it.
-- International cards must be enabled by Razorpay on the streamer's account; they may ask for documents.
-- Razorpay is the only gateway built in. Tell me if you want another one.
+HOW SURE I AM ABOUT EACH GATEWAY (honest version, from the services' own documentation)
+- Razorpay: signature and the payment.captured event confirmed in the documentation. I have not seen a real payment from
+  your page, so where your Name/Message fields appear may differ.
+- Stripe: the signature scheme (t=...,v1=..., 5 minute tolerance) is confirmed; the custom-field layout is from my knowledge of Stripe's
+  format, not from a real payment.
+- Cashfree: the signature scheme (timestamp + body, base64) is confirmed. Cashfree's documentation I could read does not
+  show where payment-form fields such as Name/Message appear, so ChatVoice searches the whole payload for fields labelled
+  like a name or a message. Test it first in Cashfree's sandbox.
+- Any tool: my own simple format, fully tested.
+If a name or message does not show up in test mode, send me the webhook payload from your dashboard and I will adjust it.
+International cards need to be enabled by the payment service on the streamer's account.
