@@ -5,8 +5,8 @@ import sys
 import time
 
 from PySide6.QtCore import QEasingCurve, QParallelAnimationGroup, QPropertyAnimation, Qt, QTimer, QUrl
-from PySide6.QtGui import QColor, QDesktopServices
-from PySide6.QtWidgets import (QApplication, QButtonGroup, QCheckBox, QComboBox, QFrame, QGraphicsDropShadowEffect, QGraphicsOpacityEffect, QGridLayout, QHBoxLayout,
+from PySide6.QtGui import QColor, QDesktopServices, QFont, QFontDatabase, QTextBlockFormat, QTextCursor
+from PySide6.QtWidgets import (QApplication, QButtonGroup, QCheckBox, QColorDialog, QComboBox, QFrame, QGraphicsDropShadowEffect, QGraphicsOpacityEffect, QGridLayout, QHBoxLayout,
                                QLabel, QLineEdit, QPlainTextEdit, QPushButton, QScrollArea, QSlider, QSpinBox, QStackedWidget,
                                QTextEdit, QVBoxLayout, QWidget)
 
@@ -43,6 +43,26 @@ PAGE_BLURB = (
     "Browser sources for alerts and chat in OBS.",
 )
 MARKS = {"youtube": ("YT", "#ff4d4d"), "twitch": ("TW", "#9146ff"), "kick": ("KK", "#53fc18")}
+CHAT_FONTS = ("Poppins", "Arial", "Segoe UI", "Calibri", "Verdana", "Tahoma", "Consolas", "Cascadia Mono", "Inter", "Roboto", "DM Sans", "Space Grotesk", "JetBrains Mono")
+CHAT_WEIGHTS = (("Light", 300), ("Regular", 400), ("Medium", 500), ("Semi Bold", 600), ("Bold", 700), ("Extra Bold", 800))
+CHAT_TRANSFORMS = (("Normal", "normal"), ("Uppercase", "upper"), ("Lowercase", "lower"), ("Capitalize", "caps"))
+CHAT_ALIGNS = (("Left", "left"), ("Center", "center"), ("Right", "right"))
+
+
+def available_chat_fonts():
+    have = set(QFontDatabase.families())
+    found = [name for name in CHAT_FONTS if name in have or name == "Poppins"]
+    return ["System Default"] + found
+
+
+def shape_chat_text(text, mode):
+    if mode == "upper":
+        return (text or "").upper()
+    if mode == "lower":
+        return (text or "").lower()
+    if mode == "caps":
+        return (text or "").title()
+    return text or ""
 ROOT = getattr(sys, "_MEIPASS", os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 def esc(s):
@@ -269,23 +289,10 @@ class MainWindow(QWidget):
         lay = QVBoxLayout(side)
         lay.setContentsMargins(0, 16, 0, 14)
         lay.setSpacing(2)
-        brand = QHBoxLayout()
-        brand.setContentsMargins(16, 0, 16, 8)
-        brand.setSpacing(10)
-        mark = QLabel("CV")
-        mark.setObjectName("brandMark")
-        mark.setAlignment(Qt.AlignCenter)
-        brand.addWidget(mark)
-        names = QVBoxLayout()
-        names.setSpacing(0)
         self.logo = QLabel("ChatVoice")
         self.logo.setObjectName("logo")
-        names.addWidget(self.logo)
-        tag = QLabel("for live streams")
-        tag.setObjectName("tagline")
-        names.addWidget(tag)
-        brand.addLayout(names, 1)
-        lay.addLayout(brand)
+        self.logo.setContentsMargins(16, 0, 12, 8)
+        lay.addWidget(self.logo)
         self.nav = QButtonGroup(self)
         self.nav.setExclusive(True)
         groups = (("Workspace", (0, 1, 2)), ("Tools", (3, 4, 5, 6, 7)))
@@ -513,14 +520,189 @@ class MainWindow(QWidget):
     def _page_feed(self):
         page = QWidget()
         page.setObjectName("page")
-        lay = QVBoxLayout(page)
+        lay = QHBoxLayout(page)
         lay.setContentsMargins(0, 8, 0, 0)
+        lay.setSpacing(12)
         self.feed = QTextEdit()
+        self.feed.setObjectName("feed")
         self.feed.setReadOnly(True)
         self.feed.document().setMaximumBlockCount(300)
         self.feed.setPlaceholderText("Chat messages appear here. Grey lines were skipped by moderation.")
-        lay.addWidget(self.feed)
+        lay.addWidget(self.feed, 1)
+        lay.addWidget(self._chat_style_panel())
+        self._apply_chat_style()
         return page
+
+    def _chat_style_panel(self):
+        panel = QFrame()
+        panel.setObjectName("tile")
+        panel.setFixedWidth(232)
+        outer = QVBoxLayout(panel)
+        outer.setContentsMargins(12, 12, 12, 12)
+        outer.setSpacing(6)
+        title = QLabel("Text style")
+        title.setStyleSheet("font-size:14px; font-weight:650;")
+        outer.addWidget(title)
+        note = QLabel("Live chat messages only")
+        note.setObjectName("hint")
+        outer.addWidget(note)
+        self.chat_font = QComboBox()
+        for name in available_chat_fonts():
+            self.chat_font.addItem(name, "" if name == "System Default" else name)
+        self.chat_font.setCurrentIndex(max(0, self.chat_font.findData(self.s.get("chat_font") or "")))
+        self.chat_font.currentIndexChanged.connect(lambda _: self._save_chat("chat_font", self.chat_font.currentData()))
+        outer.addWidget(self._style_label("Font"))
+        outer.addWidget(self.chat_font)
+        self.chat_size, size_row = self._style_slider("chat_size", 10, 32, lambda v: "%d px" % v)
+        outer.addWidget(self._style_label("Size"))
+        outer.addLayout(size_row)
+        self.chat_weight = QComboBox()
+        for name, value in CHAT_WEIGHTS:
+            self.chat_weight.addItem(name, value)
+        self.chat_weight.setCurrentIndex(max(0, self.chat_weight.findData(int(self.s.get("chat_weight") or 400))))
+        self.chat_weight.currentIndexChanged.connect(lambda _: self._save_chat("chat_weight", int(self.chat_weight.currentData())))
+        outer.addWidget(self._style_label("Weight"))
+        outer.addWidget(self.chat_weight)
+        color_row = QHBoxLayout()
+        self.chat_color_btn = QPushButton()
+        self.chat_color_btn.setObjectName("quiet")
+        self.chat_color_btn.setCursor(Qt.PointingHandCursor)
+        self.chat_color_btn.clicked.connect(self._pick_chat_color)
+        color_row.addWidget(self.chat_color_btn, 1)
+        outer.addWidget(self._style_label("Color"))
+        outer.addLayout(color_row)
+        self.chat_line, line_row = self._style_slider("chat_line", 10, 20, lambda v: "%.1f" % (v / 10))
+        outer.addWidget(self._style_label("Line height"))
+        outer.addLayout(line_row)
+        self.chat_track, track_row = self._style_slider("chat_track", -1, 4, lambda v: "%d px" % v)
+        outer.addWidget(self._style_label("Letter spacing"))
+        outer.addLayout(track_row)
+        self.chat_opacity, fade_row = self._style_slider("chat_opacity", 0, 100, lambda v: "%d%%" % v)
+        outer.addWidget(self._style_label("Opacity"))
+        outer.addLayout(fade_row)
+        self.chat_transform = QComboBox()
+        for name, value in CHAT_TRANSFORMS:
+            self.chat_transform.addItem(name, value)
+        self.chat_transform.setCurrentIndex(max(0, self.chat_transform.findData(self.s.get("chat_transform") or "normal")))
+        self.chat_transform.currentIndexChanged.connect(lambda _: self._save_chat("chat_transform", self.chat_transform.currentData()))
+        outer.addWidget(self._style_label("Transform"))
+        outer.addWidget(self.chat_transform)
+        self.chat_style = QComboBox()
+        self.chat_style.addItem("Normal", False)
+        self.chat_style.addItem("Italic", True)
+        self.chat_style.setCurrentIndex(1 if self.s.get("chat_italic") else 0)
+        self.chat_style.currentIndexChanged.connect(lambda _: self._save_chat("chat_italic", bool(self.chat_style.currentData())))
+        outer.addWidget(self._style_label("Style"))
+        outer.addWidget(self.chat_style)
+        self.chat_align = QComboBox()
+        for name, value in CHAT_ALIGNS:
+            self.chat_align.addItem(name, value)
+        self.chat_align.setCurrentIndex(max(0, self.chat_align.findData(self.s.get("chat_align") or "left")))
+        self.chat_align.currentIndexChanged.connect(lambda _: self._save_chat("chat_align", self.chat_align.currentData()))
+        outer.addWidget(self._style_label("Alignment"))
+        outer.addWidget(self.chat_align)
+        outer.addWidget(self._style_label("Preview"))
+        self.chat_preview = QLabel("Samir: Hello everyone!\nAlex: Welcome to the stream!")
+        self.chat_preview.setWordWrap(True)
+        self.chat_preview.setMinimumHeight(64)
+        outer.addWidget(self.chat_preview)
+        reset = QPushButton("Reset to default")
+        reset.setObjectName("quiet")
+        reset.setCursor(Qt.PointingHandCursor)
+        reset.clicked.connect(self._reset_chat_style)
+        outer.addWidget(reset)
+        outer.addStretch(1)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setFixedWidth(248)
+        scroll.setWidget(panel)
+        return scroll
+
+    def _style_label(self, text):
+        lab = QLabel(text)
+        lab.setObjectName("field")
+        return lab
+
+    def _style_slider(self, key, lo, hi, fmt):
+        row = QHBoxLayout()
+        sl = QSlider(Qt.Horizontal)
+        sl.setRange(lo, hi)
+        sl.setValue(int(self.s.get(key)))
+        value = QLabel(fmt(sl.value()))
+        value.setObjectName("hint")
+        value.setMinimumWidth(42)
+        sl.valueChanged.connect(lambda v, k=key, f=fmt, lab=value: (lab.setText(f(v)), self._save_chat(k, int(v))))
+        row.addWidget(sl, 1)
+        row.addWidget(value)
+        return sl, row
+
+    def _save_chat(self, key, value):
+        self.s.set(key, value)
+        self._apply_chat_style()
+
+    def _pick_chat_color(self):
+        current = QColor(self.s.get("chat_color") or "#f4f4f8")
+        chosen = QColorDialog.getColor(current, self, "Live chat text color")
+        if chosen.isValid():
+            self._save_chat("chat_color", chosen.name())
+
+    def _reset_chat_style(self):
+        from .settings import DEFAULTS
+        for key in ("chat_font", "chat_size", "chat_weight", "chat_color", "chat_line", "chat_track", "chat_opacity", "chat_transform", "chat_italic", "chat_align"):
+            self.s.set(key, DEFAULTS[key])
+        self.chat_font.setCurrentIndex(max(0, self.chat_font.findData("")))
+        self.chat_size.setValue(int(DEFAULTS["chat_size"]))
+        self.chat_weight.setCurrentIndex(max(0, self.chat_weight.findData(400)))
+        self.chat_line.setValue(int(DEFAULTS["chat_line"]))
+        self.chat_track.setValue(int(DEFAULTS["chat_track"]))
+        self.chat_opacity.setValue(int(DEFAULTS["chat_opacity"]))
+        self.chat_transform.setCurrentIndex(0)
+        self.chat_style.setCurrentIndex(0)
+        self.chat_align.setCurrentIndex(0)
+        self._apply_chat_style()
+
+    def _apply_chat_style(self):
+        family = self.s.get("chat_font") or "Poppins"
+        size = int(self.s.get("chat_size") or 13)
+        weight = int(self.s.get("chat_weight") or 400)
+        italic = bool(self.s.get("chat_italic"))
+        track = int(self.s.get("chat_track") or 0)
+        color = QColor(self.s.get("chat_color") or "#f4f4f8")
+        color.setAlphaF(max(0, min(100, int(self.s.get("chat_opacity") or 100))) / 100)
+        align = {"center": Qt.AlignCenter, "right": Qt.AlignRight}.get(self.s.get("chat_align"), Qt.AlignLeft)
+        font = QFont(family if family != "System Default" else "Poppins")
+        if not self.s.get("chat_font"):
+            font = QFont("Poppins")
+        font.setPixelSize(size)
+        font.setWeight(QFont.Weight(weight) if weight in (100, 200, 300, 400, 500, 600, 700, 800, 900) else QFont.Weight.Normal)
+        font.setItalic(italic)
+        font.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, track)
+        css = "QTextEdit#feed { color: %s; font-family: \"%s\"; font-size: %dpx; font-weight: %d; font-style: %s; background: rgba(0,0,0,0.35); border: 1px solid rgba(255,255,255,0.06); border-radius: 10px; }" % (
+            color.name(QColor.NameFormat.HexArgb), font.family(), size, weight, "italic" if italic else "normal")
+        self.feed.setFont(font)
+        self.feed.setStyleSheet(css)
+        self.feed.setAlignment(align)
+        block = QTextBlockFormat()
+        block.setLineHeight(float(int(self.s.get("chat_line") or 10) * 10), 1)
+        block.setAlignment(align)
+        cursor = QTextCursor(self.feed.document())
+        cursor.beginEditBlock()
+        block_cursor = self.feed.document().firstBlock()
+        while block_cursor.isValid():
+            cursor.setPosition(block_cursor.position())
+            cursor.setBlockFormat(block)
+            block_cursor = block_cursor.next()
+        cursor.endEditBlock()
+        if hasattr(self, "chat_preview"):
+            self.chat_preview.setFont(font)
+            self.chat_preview.setAlignment(align)
+            self.chat_preview.setStyleSheet("color: %s; background: rgba(0,0,0,0.28); border-radius: 10px; padding: 8px;" % color.name(QColor.NameFormat.HexArgb))
+            sample = shape_chat_text("Samir: Hello everyone!", self.s.get("chat_transform")) + "\n" + shape_chat_text("Alex: Welcome to the stream!", self.s.get("chat_transform"))
+            self.chat_preview.setText(sample)
+        if hasattr(self, "chat_color_btn"):
+            self.chat_color_btn.setText(self.s.get("chat_color") or "#f4f4f8")
+            self.chat_color_btn.setStyleSheet("QPushButton { color: %s; }" % (self.s.get("chat_color") or "#f4f4f8"))
 
     def _bind_check(self, text, key):
         cb = QCheckBox(text)
@@ -621,7 +803,7 @@ class MainWindow(QWidget):
         t = THEMES[name]
         self.s.set("theme", name)
         self.setStyleSheet(build_qss(name))
-        self.logo.setText('<span style="color:%s">Chat</span><span style="color:%s">Voice</span>' % (t["a3"], t["text"]))
+        self.logo.setText('<span style="color:%s">🎙 Chat</span><span style="color:%s">Voice</span>' % (t["a3"], t["a2"]))
         self.fx.recolor(t["a1"])
 
     def _lite(self, on):
@@ -707,7 +889,9 @@ class MainWindow(QWidget):
         amt = " <span style='color:#ffd24d'>[%s]</span>" % esc(m.amount) if m.amount else ""
         tag = "<span style='color:%s'><b>%s</b></span>" % (color, TAGS.get(m.platform, "?"))
         if ok:
-            self.feed.append("%s <b>%s</b>%s: %s" % (tag, esc(m.author), amt, esc(m.text)))
+            author = shape_chat_text(m.author, self.s.get("chat_transform"))
+            text = shape_chat_text(m.text, self.s.get("chat_transform"))
+            self.feed.append("%s <b>%s</b>%s: %s" % (tag, esc(author), amt, esc(text)))
             self.speaker.say(m.author, m.text, m.amount if m.kind == "super" else "")
             if m.platform != "tip":
                 self.overlay.push("chat", {"platform": m.platform, "name": m.author, "text": m.text})
@@ -716,8 +900,10 @@ class MainWindow(QWidget):
             if m.kind == "super":
                 self.discord.post_paid(m)
         else:
+            author = shape_chat_text(m.author, self.s.get("chat_transform"))
+            text = shape_chat_text(m.text, self.s.get("chat_transform"))
             self.feed.append("<span style='color:#5d667d'>%s %s: %s <i>(skipped: %s)</i></span>"
-                             % (TAGS.get(m.platform, "?"), esc(m.author), esc(m.text), reason))
+                             % (TAGS.get(m.platform, "?"), esc(author), esc(text), reason))
 
     def on_tip(self, ev):
         msg, note = (ev.get("message") or "").strip(), ""
