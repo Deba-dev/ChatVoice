@@ -6,7 +6,7 @@ from PySide6.QtGui import QColor
 from PySide6.QtWidgets import QGraphicsDropShadowEffect
 
 THEMES = {
-    "Neon Violet": dict(bg="#10121a", bg2="#171a26", text="#f1f2ff", mute="#9aa0cc", a1="#8b5cf6", a2="#22d3ee", a3="#f472b6"),
+    "Neon Violet": dict(bg="#07080c", bg2="#12141c", text="#f4f4f8", mute="#9b9bb0", a1="#7c5cff", a2="#c4b5fd", a3="#e9d5ff"),
     "Sunset":      dict(bg="#1a1216", bg2="#24181d", text="#fff1f4", mute="#c9a3b4", a1="#ff7a45", a2="#ff3d81", a3="#ffd166"),
     "Ocean":       dict(bg="#0d1620", bg2="#12202c", text="#eaf6ff", mute="#8db3cf", a1="#00b8ff", a2="#4f7cff", a3="#2dd4bf"),
     "Matcha":      dict(bg="#101814", bg2="#16201a", text="#effff5", mute="#93bfa5", a1="#34d399", a2="#a3e635", a3="#22d3ee"),
@@ -16,19 +16,29 @@ DEFAULT_THEME = "Neon Violet"
 QSS = Template("""
 * { font-family: "Poppins", "Segoe UI", "Noto Sans Devanagari", sans-serif; font-size: 13px; color: $text; }
 QWidget#root { background: $bg; }
-QWidget#page, QStackedWidget, QScrollArea, QScrollArea > QWidget > QWidget { background: transparent; }
-QFrame#side { background: rgba(255,255,255,0.03); border-right: 1px solid rgba(255,255,255,0.06); }
-QLabel#logo { font-size: 20px; font-weight: 700; padding: 4px 0 16px 6px; }
-QLabel#title { font-size: 22px; font-weight: 700; }
+QWidget#canvas { background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 $bg, stop:0.72 $bg, stop:1 $bg2); }
+QWidget#page, QStackedWidget, QScrollArea, QScrollArea > QWidget > QWidget { background: transparent; border: none; }
+QFrame#side { background: rgba(0,0,0,0.45); border-right: 1px solid rgba(255,255,255,0.04); }
+QLabel#brandMark { background: $a1; color: #ffffff; font-size: 12px; font-weight: 700; border-radius: 8px; padding: 6px 7px; }
+QLabel#logo { font-size: 15px; font-weight: 700; }
+QLabel#tagline { color: $mute; font-size: 11px; }
+QLabel#group { color: $mute; font-size: 10px; font-weight: 700; padding: 12px 16px 4px 16px; }
+QLabel#title { font-size: 28px; font-weight: 650; }
 QLabel#sub { color: $mute; font-size: 13px; }
-QLabel#hint { color: $mute; font-size: 12px; }
-QPushButton#nav { text-align: left; padding: 8px 14px; border: none; border-left: 3px solid transparent; margin: 1px 10px 1px 0;
-    background: transparent; color: $mute; border-radius: 0 8px 8px 0; font-size: 13px; font-weight: 500; }
+QLabel#hint, QLabel#field { color: $mute; font-size: 12px; }
+QLabel#statNum { font-size: 20px; font-weight: 650; }
+QFrame#stat, QFrame#aside { background: rgba(255,255,255,0.035); border: none; border-radius: 14px; }
+QPushButton#nav { text-align: left; padding: 7px 12px; border: none; margin: 1px 12px; border-radius: 8px;
+    background: transparent; color: $mute; font-size: 13px; font-weight: 500; }
 QPushButton#nav:hover { background: rgba(255,255,255,0.05); color: $text; }
-QPushButton#nav:checked { color: #ffffff; border-left: 3px solid $a1; font-weight: 600;
-    background: rgba(255,255,255,0.07); }
-QFrame#card { background: $bg2; border: 1px solid rgba(255,255,255,0.08); border-radius: 12px; }
-QPushButton { background: transparent; border: 1px solid rgba(255,255,255,0.12); border-radius: 8px; padding: 7px 14px; font-weight: 500; }
+QPushButton#nav:checked { color: #ffffff; font-weight: 600; background: rgba(255,255,255,0.08); }
+QFrame#card, QFrame#tile { background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.045); border-radius: 16px; }
+QLabel#pill, QLabel#pillOn, QLabel#pillWait, QLabel#pillBad { border-radius: 9px; padding: 3px 8px; font-size: 11px; font-weight: 600; }
+QLabel#pill { background: rgba(255,255,255,0.06); color: $mute; }
+QLabel#pillOn { background: rgba(52,211,153,0.16); color: #b7f7dc; }
+QLabel#pillWait { background: rgba(251,191,36,0.16); color: #ffe7a3; }
+QLabel#pillBad { background: rgba(244,63,94,0.16); color: #ffc1cc; }
+QPushButton { background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.06); border-radius: 8px; padding: 7px 12px; font-weight: 500; }
 QPushButton:hover { background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.16); }
 QPushButton:pressed { background: rgba(255,255,255,0.04); }
 QPushButton:disabled { color: $mute; background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.06); }
@@ -41,9 +51,10 @@ QPushButton#stop:hover { background: rgba(255,60,120,0.18); }
 QPushButton#quiet { background: transparent; border: 1px solid rgba(255,255,255,0.12); }
 QPushButton#quiet:hover { background: rgba(255,255,255,0.06); }
 QPushButton#quiet:checked { background: rgba(255,255,255,0.10); border: 1px solid $a1; color: #ffffff; }
-QLineEdit, QComboBox, QSpinBox, QPlainTextEdit, QTextEdit { background: rgba(0,0,0,0.28); border: 1px solid rgba(255,255,255,0.10);
-    border-radius: 8px; padding: 8px 12px; selection-background-color: $a1; min-height: 20px; }
-QLineEdit:focus, QComboBox:focus, QSpinBox:focus, QPlainTextEdit:focus, QTextEdit:focus { border: 1px solid $a1; }
+QLineEdit, QComboBox, QSpinBox, QPlainTextEdit, QTextEdit { background: rgba(0,0,0,0.35); border: 1px solid rgba(255,255,255,0.06);
+    border-radius: 10px; padding: 8px 12px; selection-background-color: $a1; min-height: 20px; }
+QLineEdit:focus, QComboBox:focus, QSpinBox:focus, QPlainTextEdit:focus, QTextEdit:focus { border: 1px solid $a1; background: rgba(0,0,0,0.5); }
+QLineEdit#optional { background: transparent; border: 1px solid rgba(255,255,255,0.04); color: $mute; }
 QLineEdit:disabled, QComboBox:disabled, QSpinBox:disabled { color: $mute; background: rgba(0,0,0,0.16); }
 QComboBox QAbstractItemView { background: $bg2; selection-background-color: $a1; border: 1px solid rgba(255,255,255,0.12); outline: 0; }
 QSlider::groove:horizontal { height: 7px; background: rgba(255,255,255,0.12); border-radius: 3px; }
