@@ -3,6 +3,8 @@ on:
   workflow_dispatch:
   push:
     tags: ["v*"]
+permissions:
+  contents: write
 jobs:
   build:
     runs-on: windows-latest
@@ -12,10 +14,14 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install -r requirements.txt pyinstaller
-      - run: pyinstaller --noconfirm --windowed --noupx --name ChatVoice --icon assets/icon.ico --add-data "assets;assets" --exclude-module numpy --exclude-module PIL --exclude-module tkinter --exclude-module matplotlib --collect-submodules pytchat --collect-submodules edge_tts main.py
+      - run: pyinstaller --noconfirm --windowed --noupx --name ChatVoice --icon assets/icon.ico --version-file version_info.txt --add-data "assets;assets" --exclude-module numpy --exclude-module PIL --exclude-module tkinter --exclude-module matplotlib --collect-submodules pytchat --collect-submodules edge_tts main.py
       - run: choco install innosetup -y --no-progress
       - run: '& "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" installer.iss'
       - uses: actions/upload-artifact@v4
         with:
           name: ChatVoice-Setup
           path: installer/ChatVoice-Setup.exe
+      - uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          files: installer/ChatVoice-Setup.exe
