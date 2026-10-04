@@ -4,8 +4,8 @@ import os
 import sys
 import time
 
-from PySide6.QtCore import QEasingCurve, QParallelAnimationGroup, QPropertyAnimation, Qt, QTimer, QUrl
-from PySide6.QtGui import QColor, QDesktopServices, QFont, QFontDatabase, QTextBlockFormat, QTextCursor
+from PySide6.QtCore import QEasingCurve, QEvent, QParallelAnimationGroup, QPropertyAnimation, QSize, Qt, QTimer, QUrl
+from PySide6.QtGui import QColor, QDesktopServices, QFont, QFontDatabase, QIcon, QPainter, QPalette, QPen, QPixmap, QTextBlockFormat, QTextCursor, QTextOption
 from PySide6.QtWidgets import (QApplication, QButtonGroup, QCheckBox, QColorDialog, QComboBox, QFrame, QGraphicsDropShadowEffect, QGraphicsOpacityEffect, QGridLayout, QHBoxLayout,
                                QLabel, QLineEdit, QPlainTextEdit, QPushButton, QScrollArea, QSlider, QSpinBox, QStackedWidget,
                                QTextEdit, QVBoxLayout, QWidget)
@@ -47,6 +47,73 @@ CHAT_FONTS = ("Poppins", "Arial", "Segoe UI", "Calibri", "Verdana", "Tahoma", "C
 CHAT_WEIGHTS = (("Light", 300), ("Regular", 400), ("Medium", 500), ("Semi Bold", 600), ("Bold", 700), ("Extra Bold", 800))
 CHAT_TRANSFORMS = (("Normal", "normal"), ("Uppercase", "upper"), ("Lowercase", "lower"), ("Capitalize", "caps"))
 CHAT_ALIGNS = (("Left", "left"), ("Center", "center"), ("Right", "right"))
+
+
+def edit_icon():
+    """A small pencil, drawn here so the app does not need an icon package."""
+    pix = QPixmap(16, 16)
+    pix.fill(Qt.transparent)
+    painter = QPainter(pix)
+    painter.setRenderHint(QPainter.Antialiasing)
+    pen = QPen(QColor("#f4f4f8"))
+    pen.setWidthF(1.5)
+    pen.setCapStyle(Qt.RoundCap)
+    pen.setJoinStyle(Qt.RoundJoin)
+    painter.setPen(pen)
+    painter.drawLine(3, 13, 12, 4)
+    painter.drawLine(11, 3, 14, 6)
+    painter.drawLine(2, 14, 5, 11)
+    painter.end()
+    return QIcon(pix)
+
+
+class ChatFeed(QTextEdit):
+    """Live chat text. The hint is drawn in the full box so a large font wraps instead of being clipped."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.hint = ""
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        if not self.hint or not self.document().isEmpty():
+            return
+        painter = QPainter(self.viewport())
+        painter.setPen(self.palette().color(QPalette.ColorRole.PlaceholderText))
+        painter.setFont(self.font())
+        margin = int(self.document().documentMargin())
+        painter.drawText(self.viewport().rect().adjusted(margin, margin, -margin, -margin), Qt.TextWordWrap | Qt.AlignTop, self.hint)
+
+
+class ChatStage(QWidget):
+    """Chat box that keeps the text-style button and popup positioned on itself."""
+
+    def __init__(self):
+        super().__init__()
+        self.feed = None
+        self.trigger = None
+        self.popup = None
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self.place()
+
+    def place(self):
+        if self.feed is None:
+            return
+        self.feed.setGeometry(0, 0, self.width(), self.height())
+        if self.trigger is not None:
+            self.trigger.move(self.width() - self.trigger.width() - 10, 10)
+            self.trigger.raise_()
+        if self.popup is not None and self.popup.isVisible():
+            self.place_popup()
+
+    def place_popup(self):
+        margin = 24
+        width = min(320, max(240, self.width() - margin * 2))
+        height = min(560, max(180, self.height() - margin * 2))
+        self.popup.setGeometry((self.width() - width) // 2, (self.height() - height) // 2, width, height)
+        self.popup.raise_()
 
 
 def available_chat_fonts():
@@ -523,24 +590,101 @@ class MainWindow(QWidget):
         lay = QHBoxLayout(page)
         lay.setContentsMargins(0, 8, 0, 0)
         lay.setSpacing(12)
-        self.feed = QTextEdit()
+        self.chat_box = ChatStage()
+        self.feed = ChatFeed(self.chat_box)
         self.feed.setObjectName("feed")
         self.feed.setReadOnly(True)
         self.feed.document().setMaximumBlockCount(300)
-        self.feed.setPlaceholderText("Chat messages appear here. Grey lines were skipped by moderation.")
-        lay.addWidget(self.feed, 1)
-        lay.addWidget(self._chat_style_panel())
+        self.feed.hint = "Chat messages appear here. Grey lines were skipped by moderation."
+        self.feed.setLineWrapMode(QTextEdit.LineWrapMode.WidgetWidth)
+        self.feed.setWordWrapMode(QTextOption.WrapMode.WrapAtWordBoundaryOrAnywhere)
+        self.feed.document().setDocumentMargin(12)
+        self.feed.setViewportMargins(0, 42, 0, 0)
+        self.chat_style_btn = QPushButton(self.chat_box)
+        self.chat_style_btn.setObjectName("chatStyle")
+        self.chat_style_btn.setIcon(edit_icon())
+        self.chat_style_btn.setIconSize(QSize(16, 16))
+        self.chat_style_btn.setCursor(Qt.PointingHandCursor)
+        self.chat_style_btn.setFixedSize(32, 30)
+        self.chat_style_btn.setToolTip("Text style")
+        self.chat_style_btn.setAccessibleName("Text style")
+        self.chat_style_btn.setCheckable(True)
+        self.chat_style_btn.setStyleSheet(
+            "QPushButton { background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.12);"
+            " border-radius: 8px; padding: 0; font-size: 13px; font-weight: 700; }"
+            "QPushButton:hover { background: rgba(255,255,255,0.12); border: 1px solid rgba(255,255,255,0.22); }"
+            "QPushButton:focus { border: 1px solid rgba(255,255,255,0.55); }"
+            "QPushButton:checked { background: rgba(255,255,255,0.16); border: 1px solid rgba(255,255,255,0.40); }")
+        self.chat_style_btn.clicked.connect(self._toggle_chat_style)
+        self.chat_box.feed = self.feed
+        self.chat_box.trigger = self.chat_style_btn
+        self.chat_popup = self._chat_style_popup()
+        self.chat_box.popup = self.chat_popup
+        self.chat_popup.hide()
+        lay.addWidget(self.chat_box, 1)
+        QApplication.instance().installEventFilter(self)
         self._apply_chat_style()
         return page
+
+    def _set_chat_style_open(self, open_):
+        self.chat_style_btn.setChecked(open_)
+        if open_:
+            self.chat_box.place_popup()
+            self.chat_popup.show()
+        else:
+            self.chat_popup.hide()
+
+    def _toggle_chat_style(self):
+        self._set_chat_style_open(not self.chat_popup.isVisible())
+
+    def _style_popup_hit(self, widget):
+        if widget is None:
+            return False
+        if widget is self.chat_style_btn or widget is self.chat_popup or self.chat_popup.isAncestorOf(widget):
+            return True
+        active = QApplication.activePopupWidget()
+        return active is not None and (widget is active or active.isAncestorOf(widget))
+
+    def eventFilter(self, obj, event):
+        popup = getattr(self, "chat_popup", None)
+        if event.type() == QEvent.Wheel and popup is not None and popup.isAncestorOf(obj) and isinstance(obj, (QSlider, QComboBox)) and QApplication.activePopupWidget() is None:
+            bar = self.chat_style_scroll.verticalScrollBar()
+            bar.setValue(bar.value() - event.angleDelta().y())
+            return True
+        if popup is not None and popup.isVisible():
+            if event.type() == QEvent.KeyPress and event.key() == Qt.Key_Escape:
+                self._set_chat_style_open(False)
+                return True
+            if event.type() == QEvent.MouseButtonPress and not self._style_popup_hit(QApplication.widgetAt(event.globalPosition().toPoint())):
+                self._set_chat_style_open(False)
+        return super().eventFilter(obj, event)
+
+    def _chat_style_popup(self):
+        popup = QFrame(self.chat_box)
+        popup.setObjectName("chatPop")
+        popup.setStyleSheet("QFrame#chatPop { background: rgba(14,16,24,0.96); border: 1px solid rgba(255,255,255,0.12); border-radius: 16px; }")
+        shadow = QGraphicsDropShadowEffect(popup)
+        shadow.setBlurRadius(28)
+        shadow.setOffset(0, 8)
+        shadow.setColor(QColor(0, 0, 0, 160))
+        popup.setGraphicsEffect(shadow)
+        lay = QVBoxLayout(popup)
+        lay.setContentsMargins(8, 8, 8, 8)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setWidget(self._chat_style_panel())
+        self.chat_style_scroll = scroll
+        lay.addWidget(scroll)
+        return popup
 
     def _chat_style_panel(self):
         panel = QFrame()
         panel.setObjectName("tile")
-        panel.setFixedWidth(232)
         outer = QVBoxLayout(panel)
         outer.setContentsMargins(12, 12, 12, 12)
         outer.setSpacing(6)
-        title = QLabel("Text style")
+        title = QLabel("Text Style")
         title.setStyleSheet("font-size:14px; font-weight:650;")
         outer.addWidget(title)
         note = QLabel("Live chat messages only")
@@ -611,13 +755,7 @@ class MainWindow(QWidget):
         reset.setCursor(Qt.PointingHandCursor)
         reset.clicked.connect(self._reset_chat_style)
         outer.addWidget(reset)
-        outer.addStretch(1)
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.NoFrame)
-        scroll.setFixedWidth(248)
-        scroll.setWidget(panel)
-        return scroll
+        return panel
 
     def _style_label(self, text):
         lab = QLabel(text)
@@ -678,7 +816,7 @@ class MainWindow(QWidget):
         font.setWeight(QFont.Weight(weight) if weight in (100, 200, 300, 400, 500, 600, 700, 800, 900) else QFont.Weight.Normal)
         font.setItalic(italic)
         font.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, track)
-        css = "QTextEdit#feed { color: %s; font-family: \"%s\"; font-size: %dpx; font-weight: %d; font-style: %s; background: rgba(0,0,0,0.35); border: 1px solid rgba(255,255,255,0.06); border-radius: 10px; }" % (
+        css = "QTextEdit#feed { color: %s; font-family: \"%s\"; font-size: %dpx; font-weight: %d; font-style: %s; background: rgba(0,0,0,0.35); border: 1px solid rgba(255,255,255,0.06); border-radius: 10px; padding: 0; }" % (
             color.name(QColor.NameFormat.HexArgb), font.family(), size, weight, "italic" if italic else "normal")
         self.feed.setFont(font)
         self.feed.setStyleSheet(css)
