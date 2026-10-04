@@ -26,6 +26,10 @@ QLabel#group { color: $mute; font-size: 10px; font-weight: 700; padding: 12px 16
 QLabel#title { font-size: 28px; font-weight: 650; }
 QLabel#sub { color: $mute; font-size: 13px; }
 QLabel#hint, QLabel#field { color: $mute; font-size: 12px; }
+QLabel#voiceTitle { font-size: 17px; font-weight: 650; }
+QLabel#voiceName { font-size: 14px; font-weight: 600; }
+QLabel#voiceNote { color: $mute; font-size: 13px; }
+QLabel#voiceValue { font-size: 14px; font-weight: 650; }
 QLabel#statNum { font-size: 20px; font-weight: 650; }
 QFrame#stat, QFrame#aside { background: rgba(255,255,255,0.035); border: none; border-radius: 14px; }
 QPushButton#nav { text-align: left; padding: 7px 12px; border: none; margin: 1px 12px; border-radius: 8px;

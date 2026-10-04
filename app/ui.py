@@ -4,7 +4,7 @@ import os
 import sys
 import time
 
-from PySide6.QtCore import QEasingCurve, QEvent, QParallelAnimationGroup, QPropertyAnimation, QSize, Qt, QTimer, QUrl
+from PySide6.QtCore import Property, QEasingCurve, QEvent, QParallelAnimationGroup, QPropertyAnimation, QSize, Qt, QTimer, QUrl
 from PySide6.QtGui import QColor, QDesktopServices, QFont, QFontDatabase, QIcon, QPainter, QPalette, QPen, QPixmap, QTextBlockFormat, QTextCursor, QTextOption
 from PySide6.QtWidgets import (QApplication, QButtonGroup, QCheckBox, QColorDialog, QComboBox, QFrame, QGraphicsDropShadowEffect, QGraphicsOpacityEffect, QGridLayout, QHBoxLayout,
                                QLabel, QLineEdit, QPlainTextEdit, QPushButton, QScrollArea, QSlider, QSpinBox, QStackedWidget,
@@ -35,7 +35,7 @@ NAV_MARK = ("◎", "☰", "♫", "⌗", "◈", "₹", "▶", "▣")
 PAGE_BLURB = (
     "Connect your streaming platforms and manage live chat from one place.",
     "Messages that will be read aloud, and the ones moderation skipped.",
-    "Choose the voice that speaks your chat.",
+    "Choose and customize the voice that speaks your chat.",
     "Decide which messages are read and which are skipped.",
     "Link viewers and send roles through your server.",
     "Hear paid messages and tips on stream.",
@@ -134,6 +134,101 @@ ROOT = getattr(sys, "_MEIPASS", os.path.dirname(os.path.dirname(os.path.abspath(
 
 def esc(s):
     return html.escape(s or "")
+
+
+class Switch(QCheckBox):
+    """A sliding on/off control. It still saves like a checkbox."""
+
+    def __init__(self):
+        super().__init__()
+        self.setFixedSize(40, 22)
+        self.setCursor(Qt.PointingHandCursor)
+        self._knob = 0.0
+        self._accent = QColor("#7c5cff")
+        self._anim = QPropertyAnimation(self, b"knob", self)
+        self._anim.setDuration(140)
+        self._anim.setEasingCurve(QEasingCurve.OutCubic)
+        self.toggled.connect(self._slide)
+
+    def knob(self):
+        return self._knob
+
+    def setKnob(self, value):
+        self._knob = value
+        self.update()
+
+    knob = Property(float, knob, setKnob)
+
+    def set_accent(self, color):
+        self._accent = QColor(color)
+        self.update()
+
+    def setChecked(self, on):
+        self.blockSignals(True)
+        super().setChecked(on)
+        self.blockSignals(False)
+        self._knob = 1.0 if on else 0.0
+        self.update()
+
+    def _slide(self, on):
+        self._anim.stop()
+        self._anim.setStartValue(self._knob)
+        self._anim.setEndValue(1.0 if on else 0.0)
+        self._anim.start()
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(self._accent if self.isChecked() else QColor(255, 255, 255, 36))
+        painter.drawRoundedRect(0, 2, 40, 18, 9, 9)
+        painter.setBrush(QColor("#ffffff"))
+        painter.drawEllipse(int(2 + self._knob * 18), 4, 14, 14)
+
+
+class VoiceBoard(QWidget):
+    """Places voice cards in two columns, and one column when the page is narrow."""
+
+    def __init__(self):
+        super().__init__()
+        self._wide = None
+        self._pairs = []
+        self._grid = QGridLayout(self)
+        self._grid.setContentsMargins(0, 0, 0, 0)
+        self._grid.setHorizontalSpacing(12)
+        self._grid.setVerticalSpacing(12)
+
+    def set_cards(self, pairs, full):
+        self._pairs = pairs
+        self._full = full
+        self._arrange(self.width() >= 760)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._arrange(self.width() >= 760)
+
+    def _arrange(self, wide):
+        if wide == self._wide:
+            return
+        self._wide = wide
+        while self._grid.count():
+            self._grid.takeAt(0)
+        if wide:
+            for index, (left, right) in enumerate(self._pairs):
+                self._grid.addWidget(left, index, 0)
+                self._grid.addWidget(right, index, 1)
+            self._grid.addWidget(self._full, len(self._pairs), 0, 1, 2)
+            self._grid.setColumnStretch(0, 1)
+            self._grid.setColumnStretch(1, 1)
+        else:
+            row = 0
+            for left, right in self._pairs:
+                self._grid.addWidget(left, row, 0)
+                self._grid.addWidget(right, row + 1, 0)
+                row += 2
+            self._grid.addWidget(self._full, row, 0)
+            self._grid.setColumnStretch(0, 1)
+            self._grid.setColumnStretch(1, 0)
 
 
 def labeled(text, widget, hint=""):
@@ -647,10 +742,16 @@ class MainWindow(QWidget):
 
     def eventFilter(self, obj, event):
         popup = getattr(self, "chat_popup", None)
-        if event.type() == QEvent.Wheel and popup is not None and popup.isAncestorOf(obj) and isinstance(obj, (QSlider, QComboBox)) and QApplication.activePopupWidget() is None:
-            bar = self.chat_style_scroll.verticalScrollBar()
-            bar.setValue(bar.value() - event.angleDelta().y())
-            return True
+        if event.type() == QEvent.Wheel and isinstance(obj, (QSlider, QComboBox)) and QApplication.activePopupWidget() is None:
+            voice = getattr(self, "voice_scroll", None)
+            if popup is not None and popup.isAncestorOf(obj):
+                bar = self.chat_style_scroll.verticalScrollBar()
+                bar.setValue(bar.value() - event.angleDelta().y())
+                return True
+            if voice is not None and voice.isAncestorOf(obj):
+                bar = voice.verticalScrollBar()
+                bar.setValue(bar.value() - event.angleDelta().y())
+                return True
         if popup is not None and popup.isVisible():
             if event.type() == QEvent.KeyPress and event.key() == Qt.Key_Escape:
                 self._set_chat_style_open(False)
@@ -871,37 +972,147 @@ class MainWindow(QWidget):
         cb.currentIndexChanged.connect(lambda _: self.s.set(key, cb.currentData()))
         return cb
 
+    def _voice_section(self, title, detail):
+        card = QFrame()
+        card.setObjectName("tile")
+        lay = QVBoxLayout(card)
+        lay.setContentsMargins(18, 16, 18, 16)
+        lay.setSpacing(8)
+        head = QLabel(title)
+        head.setObjectName("voiceTitle")
+        note = QLabel(detail)
+        note.setObjectName("voiceNote")
+        note.setWordWrap(True)
+        lay.addWidget(head)
+        lay.addWidget(note)
+        return card, lay
+
+    def _voice_field(self, title, detail, widget):
+        wrap = QWidget()
+        lay = QVBoxLayout(wrap)
+        lay.setContentsMargins(0, 4, 0, 0)
+        lay.setSpacing(2)
+        name = QLabel(title)
+        name.setObjectName("voiceName")
+        note = QLabel(detail)
+        note.setObjectName("voiceNote")
+        note.setWordWrap(True)
+        if widget.maximumWidth() > 1000:
+            widget.setMaximumWidth(420)
+        lay.addWidget(name)
+        lay.addWidget(note)
+        lay.addWidget(widget)
+        return wrap
+
+    def _voice_switch(self, title, detail, key):
+        row = QWidget()
+        lay = QHBoxLayout(row)
+        lay.setContentsMargins(0, 6, 0, 6)
+        text = QVBoxLayout()
+        text.setSpacing(1)
+        name = QLabel(title)
+        name.setObjectName("voiceName")
+        name.setWordWrap(True)
+        note = QLabel(detail)
+        note.setObjectName("voiceNote")
+        note.setWordWrap(True)
+        text.addWidget(name)
+        text.addWidget(note)
+        switch = Switch()
+        switch.set_accent(THEMES.get(self.s.get("theme"), THEMES[DEFAULT_THEME])["a1"])
+        switch.setChecked(bool(self.s.get(key)))
+        switch.toggled.connect(lambda on, k=key: self.s.set(k, on))
+        lay.addLayout(text, 1)
+        lay.addWidget(switch, 0, Qt.AlignTop)
+        return row
+
+    def _voice_meter(self, title, detail, key, lo, hi, fmt):
+        wrap = QWidget()
+        lay = QVBoxLayout(wrap)
+        lay.setContentsMargins(0, 6, 0, 2)
+        lay.setSpacing(4)
+        top = QHBoxLayout()
+        name = QLabel(title)
+        name.setObjectName("voiceName")
+        value = QLabel()
+        value.setObjectName("voiceValue")
+        top.addWidget(name)
+        top.addStretch(1)
+        top.addWidget(value)
+        note = QLabel(detail)
+        note.setObjectName("voiceNote")
+        note.setWordWrap(True)
+        slider = self._bind_slider(key, lo, hi)
+        value.setText(fmt(slider.value()))
+        slider.valueChanged.connect(lambda v, f=fmt, lab=value: lab.setText(f(v)))
+        lay.addLayout(top)
+        lay.addWidget(note)
+        lay.addWidget(slider)
+        return wrap
+
     def _page_voice(self):
         page = QWidget()
         page.setObjectName("page")
-        lay = QVBoxLayout(page)
-        lay.setContentsMargins(0, 8, 0, 0)
+        outer = QVBoxLayout(page)
+        outer.setContentsMargins(0, 8, 0, 0)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        self.voice_scroll = scroll
+        inner = QWidget()
+        lay = QVBoxLayout(inner)
+        lay.setContentsMargins(0, 0, 0, 8)
+        lay.setSpacing(12)
+
+        engine, engine_lay = self._voice_section("Voice engine", "Choose the speech engine used to read your chat.")
         eng = QComboBox()
         eng.addItem("Neural voices (online, best quality)", "neural")
         eng.addItem("Windows voices (offline)", "windows")
         eng.setCurrentIndex(max(0, eng.findData(self.s.get("engine"))))
         eng.currentIndexChanged.connect(lambda _: self.s.set("engine", eng.currentData()))
-        lay.addWidget(labeled("Voice engine", eng))
-        lay.addWidget(labeled("Hindi (Devanagari) voice", self._voice_combo("hi_voice")))
-        lay.addWidget(labeled("Hinglish / English voice", self._voice_combo("en_voice")))
-        lay.addWidget(self._bind_check("Different voice for each viewer", "per_viewer"))
-        lay.addWidget(labeled("Speed", self._bind_slider("rate", -5, 5)))
-        lay.addWidget(labeled("Volume", self._bind_slider("volume", 0, 100)))
-        lay.addWidget(self._bind_check("Say the viewer's name first", "read_name"))
-        lay.addWidget(self._bind_check("Read Super Chats / Bits (paid messages are never dropped)", "read_super"))
-        lay.addWidget(labeled("Max queued messages", self._bind_spin("queue_max", 1, 20),
-                              "older ones are dropped when chat is fast"))
-        row = QHBoxLayout()
-        b1 = QPushButton("Edit Hinglish word list")
-        b1.clicked.connect(lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(self.words_path)))
-        b2 = QPushButton("Reload word list")
-        b2.clicked.connect(lambda: self.feed.append("<span style='color:#8a93a8'>Loaded %d short-form words</span>"
-                                                      % hinglish.load_words(self.words_path)))
-        row.addWidget(b1)
-        row.addWidget(b2)
-        row.addStretch(1)
-        lay.addLayout(row)
+        engine_lay.addWidget(self._voice_field("Voice engine", "Neural voices need the internet. Windows voices work offline.", eng))
+        lay.addWidget(engine)
+
+        languages, lang_lay = self._voice_section("Language voices", "Pick who speaks each kind of message.")
+        lang_lay.addWidget(self._voice_field("Hindi", "Choose the voice for Devanagari messages.", self._voice_combo("hi_voice")))
+        lang_lay.addWidget(self._voice_field("Hinglish / English", "Choose the voice for Latin-script messages.", self._voice_combo("en_voice")))
+
+        options, opt_lay = self._voice_section("Voice options", "Small choices for how messages are spoken.")
+        opt_lay.addWidget(self._voice_switch("Different voice for each viewer", "Use a different voice when possible for each viewer.", "per_viewer"))
+        opt_lay.addWidget(self._voice_switch("Say the viewer's name first", "Speak the viewer's name before reading their message.", "read_name"))
+        opt_lay.addWidget(self._voice_switch("Read Super Chats / Bits", "Always read paid messages, even when normal messages are skipped.", "read_super"))
+
+        playback, play_lay = self._voice_section("Playback", "How fast and how loud the voice sounds.")
+        play_lay.addWidget(self._voice_meter("Speed", "Controls how quickly messages are spoken.", "rate", -5, 5, lambda v: "%.1f×" % (1 + v * 0.1)))
+        play_lay.addWidget(self._voice_meter("Volume", "Controls the voice output level.", "volume", 0, 100, lambda v: "%d%%" % v))
+
+        queue, queue_lay = self._voice_section("Message queue", "Controls how many chat messages can wait to be spoken.")
+        spin = self._bind_spin("queue_max", 1, 20)
+        spin.setMaximumWidth(88)
+        queue_lay.addWidget(self._voice_field("Maximum messages in queue", "Older messages are removed when chat becomes too fast.", spin))
+
+        words, word_lay = self._voice_section("Word list", "Manage words and pronunciation used when reading Hinglish chat.")
+        buttons = QHBoxLayout()
+        edit = QPushButton("Edit word list")
+        edit.setObjectName("primary")
+        edit.setCursor(Qt.PointingHandCursor)
+        edit.clicked.connect(lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(self.words_path)))
+        reload_words = QPushButton("Reload word list")
+        reload_words.setObjectName("quiet")
+        reload_words.setCursor(Qt.PointingHandCursor)
+        reload_words.clicked.connect(lambda: self.feed.append("<span style='color:#8a93a8'>Loaded %d short-form words</span>"
+                                                               % hinglish.load_words(self.words_path)))
+        buttons.addWidget(edit)
+        buttons.addWidget(reload_words)
+        buttons.addStretch(1)
+        word_lay.addLayout(buttons)
+
+        board = VoiceBoard()
+        board.set_cards([(languages, options), (playback, queue)], words)
+        lay.addWidget(board)
         lay.addStretch(1)
+        scroll.setWidget(inner)
+        outer.addWidget(scroll)
         return page
 
     def _page_mod(self):
@@ -943,6 +1154,8 @@ class MainWindow(QWidget):
         self.setStyleSheet(build_qss(name))
         self.logo.setText('<span style="color:%s">🎙 Chat</span><span style="color:%s">Voice</span>' % (t["a3"], t["a2"]))
         self.fx.recolor(t["a1"])
+        for switch in self.findChildren(Switch):
+            switch.set_accent(t["a1"])
 
     def _lite(self, on):
         self.s.set("lite_mode", on)
