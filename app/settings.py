@@ -29,6 +29,8 @@ DEFAULTS = {
     "mod_del_blocked": True, "mod_del_links": True, "mod_del_spam": False, "mod_dry_run": True, "mod_budget": 60,
     "mod_timeout_after": 3, "mod_timeout_secs": 300, "yt_actions_date": "", "yt_actions_count": 0,
     "role_verified": "", "role_regular": "", "role_supporter": "", "regular_msgs": 50, "dedupe_secs": 20, "user_cooldown": 4, "queue_max": 6,
+    "chat_font": "", "chat_size": 13, "chat_weight": 400, "chat_color": "#f4f4f8",
+    "chat_line": 10, "chat_track": 0, "chat_opacity": 100, "chat_transform": "normal", "chat_italic": False, "chat_align": "left",
 }
 
 

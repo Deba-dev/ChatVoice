@@ -20,7 +20,7 @@ QWidget#canvas { background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 $bg,
 QWidget#page, QStackedWidget, QScrollArea, QScrollArea > QWidget > QWidget { background: transparent; border: none; }
 QFrame#side { background: rgba(0,0,0,0.45); border-right: 1px solid rgba(255,255,255,0.04); }
 QLabel#brandMark { background: $a1; color: #ffffff; font-size: 12px; font-weight: 700; border-radius: 8px; padding: 6px 7px; }
-QLabel#logo { font-size: 15px; font-weight: 700; }
+QLabel#logo { font-size: 20px; font-weight: 700; }
 QLabel#tagline { color: $mute; font-size: 11px; }
 QLabel#group { color: $mute; font-size: 10px; font-weight: 700; padding: 12px 16px 4px 16px; }
 QLabel#title { font-size: 28px; font-weight: 650; }
