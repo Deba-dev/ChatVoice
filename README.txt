@@ -7,11 +7,13 @@ OBS overlays (alerts and chat on screen) and one-click self-updates.
 WHAT IS INSIDE
   main.py, app\           the Windows app (Python + PySide6)
   cloud\                  the free Cloudflare server (Discord roles, payment webhook)
+  youtube-bot\            hosted YouTube moderator service for Railway or Render
   assets\                 icon and the Poppins font
   tests\                  automatic checks (node test.mjs for the cloud, python tests\test_app.py for the app)
   CLOUD-SETUP.txt         one-time cloud + Discord setup (you, once)
   PAYMENTS-SETUP.txt      Razorpay payment page and webhook
   YT-MODERATION-SETUP.txt Google sign-in for deleting YouTube messages
+  youtube-bot\README.txt  deploy the hosted moderator to Railway or Render
   GITHUB-BUILD-GUIDE.txt  turn the project into ChatVoice-Setup.exe, free
   UPDATING.txt            publish a new version; users update with one click
   OBS-GUIDE.txt           voice, alerts and chat in OBS
@@ -21,10 +23,10 @@ PAGES IN THE APP
   Live chat   combined feed; grey lines were skipped by moderation
   Voice       voices, speed, volume, "different voice per viewer", Hinglish word list
   Moderation  what gets read aloud: link / command / bot / repeat filters, blocked words
-  Discord     roles from invite links (recommended), chat-activity roles, announcements
+  Discord     quick setup for invite-based roles; optional activity roles and announcements are under Advanced
   Payments    payment alerts read aloud (Razorpay / Stripe / Cashfree / any tool)
   YouTube mod sign in with Google to delete messages and time out repeat offenders
-  OBS overlays  addresses for OBS Browser sources: alert popups and chat on screen
+  OBS overlays  alert and chat sources, or use your StreamElements overlay URL in OBS
   Sidebar     Theme (4 colour themes) and Lite mode (turns off glow/fade animations for weak PCs or gaming)
 
 RUN IT (easiest)
@@ -55,7 +57,7 @@ USING IT
   find  "chatroom":{"id":NUMBER  and paste that number in the box under the Kick channel.
 - Voice: voices, speed, volume. Emoji, :emoji_codes: and Twitch emote words are never read aloud.
 - Moderation: link / command / bot / repeat filters and your own blocked-words list (what gets READ).
-- Discord: roles for viewers, a link page, announcements. Needs the one-time cloud setup: see CLOUD-SETUP.txt.
+- Discord: start with invite-based roles; optional activity roles and announcements are under Advanced. Needs the one-time cloud setup: see CLOUD-SETUP.txt.
 
 USING IT WITH OBS
 ChatVoice is a normal window that plays sound on your PC. To put the voice on your stream:

@@ -43,6 +43,8 @@ EACH STREAMER  (ChatVoice > Discord page)
    invite was used). If you added the bot before this version, add it again so it gets Manage Server.
 2. Copy the SERVER KEY shown after authorizing into ChatVoice, click "Test connection".
 3. In Discord: Server Settings > Roles: drag the "ChatVoice" role ABOVE the roles it should give.
+   If you do not need automatic roles, you can stop here. Invite-based roles are the recommended next step;
+   chat-activity roles, account linking, and announcements are optional advanced features in the app.
 4. ROLES FROM INVITE LINKS (recommended, no login page, nothing looks suspicious to viewers):
    - In Discord: Invite People > Edit invite link > Expire: Never, Max uses: No limit. Make one per place
      (one for YouTube, one for Twitch, one for Kick).
