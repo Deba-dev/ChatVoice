@@ -1,5 +1,6 @@
 """OBS overlays page: copy the two addresses into OBS Browser sources."""
-from PySide6.QtGui import QGuiApplication
+from PySide6.QtCore import QUrl
+from PySide6.QtGui import QDesktopServices, QGuiApplication
 from PySide6.QtWidgets import QCheckBox, QFrame, QLabel, QLineEdit, QPushButton, QScrollArea, QSpinBox, QVBoxLayout, QWidget
 
 from .discord_page import _card, _row
@@ -59,6 +60,21 @@ class OverlayPage(QScrollArea):
         hint.setObjectName("hint")
         cl.addWidget(hint)
         lay.addWidget(c)
+
+        c, cl = _card("Use a StreamElements overlay",
+                      "Already have an overlay in StreamElements? Paste its overlay URL here, then add it to OBS as a separate "
+                      "Browser source. ChatVoice does not import or host this overlay.")
+        self.external_url = QLineEdit(self.s.get("ov_external_url"))
+        self.external_url.setPlaceholderText("Paste your StreamElements overlay URL")
+        self.external_url.editingFinished.connect(
+            lambda: self.s.set("ov_external_url", self.external_url.text().strip()))
+        copy_external = QPushButton("Copy URL")
+        copy_external.clicked.connect(self.copy_external_url)
+        open_se = QPushButton("Open StreamElements")
+        open_se.clicked.connect(lambda: QDesktopServices.openUrl(QUrl("https://streamelements.com/overlay")))
+        cl.addWidget(_row(self.external_url, copy_external))
+        cl.addWidget(_row(open_se))
+        lay.addWidget(c)
         lay.addStretch(1)
 
     def _url_row(self, layout, url):
@@ -68,3 +84,7 @@ class OverlayPage(QScrollArea):
         b.clicked.connect(lambda: QGuiApplication.clipboard().setText(e.text()))
         layout.addWidget(_row(e, b))
         return e
+
+    def copy_external_url(self):
+        self.s.set("ov_external_url", self.external_url.text().strip())
+        QGuiApplication.clipboard().setText(self.external_url.text().strip())

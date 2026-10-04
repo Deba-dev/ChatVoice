@@ -4,7 +4,7 @@ import os
 
 from .secure import protect, unprotect
 
-SECRET_KEYS = ("cloud_token", "g_client_secret")   # stored encrypted on Windows
+SECRET_KEYS = ("cloud_token", "g_client_secret", "ov_external_url")   # stored encrypted on Windows
 
 
 def data_dir():
@@ -25,6 +25,7 @@ DEFAULTS = {
     "cloud_url": "", "cloud_token": "", "guild_id": "", "guild_name": "", "webhook_url": "",
     "announce_auto": False, "announce_text": "I'm live! Come hang out", "post_super": False,
     "pay_gateway": "razorpay", "ov_port": 8765, "ov_seconds": 8, "ov_show_message": True, "ov_sound": False, "ov_chat_seconds": 20,
+    "ov_external_url": "",
     "update_repo": "Deba-dev/ChatVoice", "auto_update_check": True, "update_last": 0, "tips_on": False, "tip_min": 20, "tip_cursor": None, "g_client_id": "", "g_client_secret": "",
     "mod_del_blocked": True, "mod_del_links": True, "mod_del_spam": False, "mod_dry_run": True, "mod_budget": 60,
     "mod_timeout_after": 3, "mod_timeout_secs": 300, "yt_actions_date": "", "yt_actions_count": 0,

@@ -51,7 +51,8 @@ class DiscordPage(QScrollArea):
 
         # 1. server
         c, cl = _card("1.  Connect your Discord server",
-                      "Paste the cloud address you were given, press 'Add bot', pick your server, then paste the server key shown afterwards.")
+                      "Quick setup: paste the ChatVoice cloud address, add the bot to your server, then paste the server key. "
+                      "For basic invite-based roles, configure only the next section; the other features are optional.")
         self.url = QLineEdit(self.s.get("cloud_url"))
         self.url.setPlaceholderText("https://chatvoice-cloud.something.workers.dev")
         self.url.editingFinished.connect(lambda: self.s.set("cloud_url", self.url.text().strip()))
@@ -99,8 +100,19 @@ class DiscordPage(QScrollArea):
         cl.addWidget(self.istatus)
         lay.addWidget(c)
 
-        # 3. chat-activity roles (optional)
-        c, cl = _card("3.  Chat-activity roles  (optional, needs the link page below)",
+        advanced_toggle = QPushButton("Show advanced Discord features (optional)")
+        advanced_toggle.setCheckable(True)
+        lay.addWidget(advanced_toggle)
+        advanced_panel = QWidget()
+        advanced_lay = QVBoxLayout(advanced_panel)
+        advanced_lay.setContentsMargins(0, 0, 0, 0)
+        advanced_lay.setSpacing(14)
+        advanced_panel.setVisible(False)
+        advanced_toggle.toggled.connect(advanced_panel.setVisible)
+        lay.addWidget(advanced_panel)
+
+        # Advanced options are hidden until requested.
+        c, cl = _card("Chat-activity roles (optional; needs the link page below)",
                       "Viewers who link their account get the Verified role. Active chatters become Regulars. "
                       "Anyone who sends a Super Chat or Bits gets the Supporter role. The ChatVoice role must sit above these roles in Discord.")
         self.boxes = {}
@@ -126,10 +138,9 @@ class DiscordPage(QScrollArea):
         self.rstatus = QLabel("")
         self.rstatus.setObjectName("sub")
         cl.addWidget(_row(load, save, self.rstatus))
-        lay.addWidget(c)
+        advanced_lay.addWidget(c)
 
-        # 3. link page
-        c, cl = _card("4.  Link page for chat-activity roles  (optional)",
+        c, cl = _card("Link page for chat-activity roles (optional)",
                       "Share this link in your Discord and stream description. Viewers log in with Discord, get a code, "
                       "and type  !link CODE  in your stream chat. That proves which chat account is theirs.")
         self.link = QLineEdit()
@@ -137,11 +148,10 @@ class DiscordPage(QScrollArea):
         copy = QPushButton("Copy")
         copy.clicked.connect(lambda: QGuiApplication.clipboard().setText(self.link.text()))
         cl.addWidget(_row(self.link, copy))
-        lay.addWidget(c)
+        advanced_lay.addWidget(c)
         self.update_link()
 
-        # 4. announcements
-        c, cl = _card("5.  Announcements  (optional)",
+        c, cl = _card("Discord announcements (optional)",
                       "Create a webhook in Discord: channel settings > Integrations > Webhooks > Copy URL.")
         self.hook = QLineEdit(self.s.get("webhook_url"))
         self.hook.setPlaceholderText("https://discord.com/api/webhooks/...")
@@ -160,7 +170,7 @@ class DiscordPage(QScrollArea):
         self.hstatus.setObjectName("sub")
         for w in (self.hook, self.text, auto, paid, _row(now, self.hstatus)):
             cl.addWidget(w)
-        lay.addWidget(c)
+        advanced_lay.addWidget(c)
         lay.addStretch(1)
         bridge.done.connect(self.on_done)
 
