@@ -1,58 +1,153 @@
-"""The Discord page of ChatVoice: connect the bot, pick roles, link page, announcements."""
+"""Discord page: add the bot with one click, get roles and invite links made for you.
+Everything manual (keys, pasting invites, chat-activity roles) stays tucked away under 'Advanced options'."""
+import urllib.parse
+
 from PySide6.QtCore import Qt, QUrl
 from PySide6.QtGui import QDesktopServices, QGuiApplication
-from PySide6.QtWidgets import (QCheckBox, QComboBox, QFrame, QHBoxLayout, QLabel, QLineEdit, QPushButton,
-                               QScrollArea, QSpinBox, QVBoxLayout, QWidget)
+from PySide6.QtWidgets import QComboBox, QHBoxLayout, QLabel, QLineEdit, QPushButton, QSpinBox, QVBoxLayout, QWidget
 
 from .discord import post_webhook, run_bg
+from .oauth_local import Loopback
+from .theme import DEFAULT_THEME, THEMES
+from .ui_kit import (FormScrollArea, Switch, bind_switch, copy_row, field_row, hrow, info_box, make_badge,
+                     option_switch_row, platform_mark, section_card, set_badge, status_row)
 
-
-def _card(title, hint=""):
-    f = QFrame()
-    f.setObjectName("card")
-    lay = QVBoxLayout(f)
-    lay.setContentsMargins(18, 14, 18, 14)
-    t = QLabel(title)
-    t.setStyleSheet("font-size:15px; font-weight:600;")
-    lay.addWidget(t)
-    if hint:
-        h = QLabel(hint)
-        h.setObjectName("hint")
-        h.setWordWrap(True)
-        lay.addWidget(h)
-    return f, lay
-
-
-def _row(*widgets):
-    w = QWidget()
-    lay = QHBoxLayout(w)
-    lay.setContentsMargins(0, 0, 0, 0)
-    for x in widgets:
-        lay.addWidget(x, 1 if isinstance(x, (QLineEdit, QComboBox)) else 0)
-    return w
-
-
+SOURCES = ("youtube", "twitch", "kick")
 NICE = {"youtube": "YouTube", "twitch": "Twitch", "kick": "Kick"}
 
 
-class DiscordPage(QScrollArea):
+def _style(btn, name):
+    btn.setObjectName(name)
+    btn.style().unpolish(btn)
+    btn.style().polish(btn)
+
+
+class DiscordPage(FormScrollArea):
     def __init__(self, settings, cloud, bridge, links):
         super().__init__()
         self.s, self.cloud, self.bridge, self.links = settings, cloud, bridge, links
         self._announced = False
-        self.setWidgetResizable(True)
-        self.setFrameShape(QFrame.NoFrame)
+        self.role_names = {}
+        self.loop = None
         inner = QWidget()
         inner.setObjectName("page")
         self.setWidget(inner)
         lay = QVBoxLayout(inner)
         lay.setContentsMargins(0, 8, 12, 12)
         lay.setSpacing(14)
+        accent = THEMES.get(self.s.get("theme"), THEMES[DEFAULT_THEME])["a1"]
 
-        # 1. server
-        c, cl = _card("1.  Connect your Discord server",
-                      "Quick setup: paste the ChatVoice cloud address, add the bot to your server, then paste the server key. "
-                      "For basic invite-based roles, configure only the next section; the other features are optional.")
+        # ---------- 1. connect ----------
+        c, cl = section_card("Connect Discord",
+                             "Press the button, choose your server on Discord's page and press Authorize. "
+                             "ChatVoice connects by itself: no keys, no links to copy.")
+        self.badge = make_badge("\u25cf  Not connected", "pill")
+        self.status = QLabel("")
+        self.status.setObjectName("sub")
+        self.status.setWordWrap(True)
+        self.connect_btn = QPushButton("Add ChatVoice bot to my server")
+        self.connect_btn.setObjectName("primary")
+        self.connect_btn.setCursor(Qt.PointingHandCursor)
+        self.connect_btn.clicked.connect(self.connect)
+        cl.addWidget(status_row(self.badge, self.status))
+        cl.addWidget(hrow(self.connect_btn))
+        cl.addWidget(info_box("Manage Roles (to give roles), Create Invite (to make your invite links), View Channels, and "
+                              "Manage Server, which Discord requires just to see how often each invite was used. The bot never reads messages.",
+                              "What the bot asks Discord for"))
+        lay.addWidget(c)
+
+        # ---------- 2. roles + invites made for you ----------
+        self.roles_card, cl = section_card("Roles for your viewers",
+                                           "Tick the platforms you stream on. ChatVoice creates a role and a never-expiring invite link for each. "
+                                           "Everyone who joins through a link gets that role within about 2 minutes.")
+        self.src_switch, self.src_link, self.src_role = {}, {}, {}
+        for src in SOURCES:
+            row = QWidget()
+            h = QHBoxLayout(row)
+            h.setContentsMargins(0, 4, 0, 4)
+            h.setSpacing(12)
+            sw = Switch()
+            sw.set_accent(accent)
+            sw.setChecked(True)
+            names = QVBoxLayout()
+            names.setSpacing(0)
+            nm = QLabel("%s viewers" % NICE[src])
+            nm.setObjectName("settingName")
+            role = QLabel("Role will be created")
+            role.setObjectName("settingNote")
+            names.addWidget(nm)
+            names.addWidget(role)
+            wrap, link = copy_row("", "Invite link appears here")
+            h.addWidget(sw)
+            h.addWidget(platform_mark(src))
+            h.addLayout(names, 1)
+            h.addWidget(wrap, 2)
+            self.src_switch[src], self.src_link[src], self.src_role[src] = sw, link, role
+            cl.addWidget(row)
+        self.setup_btn = QPushButton("Create roles and invite links")
+        self.setup_btn.setObjectName("primary")
+        self.setup_btn.setCursor(Qt.PointingHandCursor)
+        self.setup_btn.clicked.connect(self.setup_roles)
+        self.check_btn = QPushButton("Check now")
+        self.check_btn.setCursor(Qt.PointingHandCursor)
+        self.check_btn.clicked.connect(self.check_invites)
+        self.istatus = QLabel("")
+        self.istatus.setObjectName("sub")
+        self.istatus.setWordWrap(True)
+        cl.addWidget(hrow(self.setup_btn, self.check_btn))
+        cl.addWidget(self.istatus)
+        self.tip = info_box("Put each invite link where that audience will see it, for example the YouTube link in your video description "
+                            "and pinned comment. You can run this again any time: existing roles and links are reused.", "Where to share the links")
+        self.tip.hide()
+        cl.addWidget(self.tip)
+        lay.addWidget(self.roles_card)
+
+        # ---------- 3. announcements ----------
+        c, cl = section_card("Go-live announcements",
+                             "Optional. Create a webhook in Discord (channel settings > Integrations > Webhooks > Copy URL) and paste it here.")
+        self.hook = QLineEdit(self.s.get("webhook_url"))
+        self.hook.setPlaceholderText("https://discord.com/api/webhooks/...")
+        self.hook.editingFinished.connect(lambda: self.s.set("webhook_url", self.hook.text().strip()))
+        self.text = QLineEdit(self.s.get("announce_text"))
+        self.text.editingFinished.connect(lambda: self.s.set("announce_text", self.text.text()))
+        cl.addWidget(field_row("Webhook URL", "Where live announcements are posted.", self.hook))
+        cl.addWidget(field_row("Announcement text", "Message sent when you announce or auto-connect.", self.text))
+        cl.addWidget(option_switch_row("Announce automatically when I connect", "Posts to Discord when you connect to a platform.",
+                                       bind_switch(self.s, "announce_auto", accent)))
+        cl.addWidget(option_switch_row("Post Super Chats / Bits to Discord", "Forwards paid messages to the same webhook.",
+                                       bind_switch(self.s, "post_super", accent)))
+        now = QPushButton("Announce now")
+        now.clicked.connect(self.announce_now)
+        self.hstatus = QLabel("")
+        self.hstatus.setObjectName("sub")
+        cl.addWidget(hrow(now, self.hstatus))
+        lay.addWidget(c)
+
+        # ---------- advanced (hidden until asked for) ----------
+        self.adv_btn = QPushButton("Show advanced options")
+        self.adv_btn.setObjectName("quiet")
+        self.adv_btn.setCheckable(True)
+        self.adv_btn.setCursor(Qt.PointingHandCursor)
+        self.adv_btn.toggled.connect(self._toggle_advanced)
+        lay.addWidget(hrow(self.adv_btn))
+        self.adv = QWidget()
+        al = QVBoxLayout(self.adv)
+        al.setContentsMargins(0, 0, 0, 0)
+        al.setSpacing(14)
+        self._build_advanced(al)
+        self.adv.hide()
+        lay.addWidget(self.adv)
+        lay.addStretch(1)
+
+        bridge.done.connect(self.on_done)
+        self.refresh_state()
+        if self.s.get("cloud_token"):
+            self.test()
+
+    # ------------------------------------------------------------------ advanced cards
+    def _build_advanced(self, al):
+        c, cl = section_card("Connection details",
+                             "Only needed if the one-click connection does not work. Paste the server key shown on the Discord approval page.")
         self.url = QLineEdit(self.s.get("cloud_url"))
         self.url.setPlaceholderText("https://chatvoice-cloud.something.workers.dev")
         self.url.editingFinished.connect(lambda: self.s.set("cloud_url", self.url.text().strip()))
@@ -60,61 +155,37 @@ class DiscordPage(QScrollArea):
         self.key.setEchoMode(QLineEdit.Password)
         self.key.setPlaceholderText("Server key")
         self.key.editingFinished.connect(lambda: self.s.set("cloud_token", self.key.text().strip()))
-        add = QPushButton("Add bot to my server")
-        add.clicked.connect(self.open_setup)
         test = QPushButton("Test connection")
         test.setObjectName("primary")
         test.clicked.connect(self.test)
-        self.status = QLabel("Not connected")
-        self.status.setObjectName("sub")
-        cl.addWidget(self.url)
-        cl.addWidget(self.key)
-        cl.addWidget(_row(add, test, self.status))
-        lay.addWidget(c)
+        cl.addWidget(field_row("ChatVoice cloud address", "Built in. Change it only if you run your own cloud.", self.url))
+        cl.addWidget(field_row("Server key", "Filled in automatically by the one-click connection.", self.key))
+        cl.addWidget(hrow(test))
+        al.addWidget(c)
 
-        # 2. roles from normal invite links (recommended)
-        c, cl = _card("2.  Roles from your invite links  (recommended)",
-                      "In Discord create a normal invite (Invite People > Edit invite link > Never expire, No limit). Paste it below and "
-                      "pick a role. Everyone who joins through that invite gets the role automatically (checked every 2 minutes). "
-                      "Put the YouTube invite in your video description, so people who join from YouTube get the YouTube role.")
+        c, cl = section_card("Use my own invite links",
+                             "Already made invites in Discord? Paste them and pick a role instead of using the automatic setup.")
         self.inv_edits, self.inv_boxes = {}, {}
-        for src in ("youtube", "twitch", "kick"):
+        for src in SOURCES:
             e = QLineEdit(self.s.get("inv_" + src))
             e.setPlaceholderText("https://discord.gg/...")
             e.editingFinished.connect(lambda k=src, w=e: self.s.set("inv_" + k, w.text().strip()))
             cb = QComboBox()
             cb.addItem("(no role)", "")
             lab = QLabel(NICE[src])
+            lab.setObjectName("settingName")
             lab.setMinimumWidth(72)
             self.inv_edits[src], self.inv_boxes[src] = e, cb
-            cl.addWidget(_row(lab, e, cb))
+            cl.addWidget(hrow(lab, e, cb))
         save_inv = QPushButton("Save invite roles")
         save_inv.setObjectName("primary")
         save_inv.clicked.connect(self.save_invites)
-        chk = QPushButton("Check now")
-        chk.clicked.connect(self.check_invites)
-        self.istatus = QLabel("")
-        self.istatus.setObjectName("sub")
-        self.istatus.setWordWrap(True)
-        cl.addWidget(_row(save_inv, chk))
-        cl.addWidget(self.istatus)
-        lay.addWidget(c)
+        cl.addWidget(hrow(save_inv))
+        al.addWidget(c)
 
-        advanced_toggle = QPushButton("Show advanced Discord features (optional)")
-        advanced_toggle.setCheckable(True)
-        lay.addWidget(advanced_toggle)
-        advanced_panel = QWidget()
-        advanced_lay = QVBoxLayout(advanced_panel)
-        advanced_lay.setContentsMargins(0, 0, 0, 0)
-        advanced_lay.setSpacing(14)
-        advanced_panel.setVisible(False)
-        advanced_toggle.toggled.connect(advanced_panel.setVisible)
-        lay.addWidget(advanced_panel)
-
-        # Advanced options are hidden until requested.
-        c, cl = _card("Chat-activity roles (optional; needs the link page below)",
-                      "Viewers who link their account get the Verified role. Active chatters become Regulars. "
-                      "Anyone who sends a Super Chat or Bits gets the Supporter role. The ChatVoice role must sit above these roles in Discord.")
+        c, cl = section_card("Chat-activity roles",
+                             "Viewers who link their account get Verified. Active chatters become Regulars. Paid messages grant Supporter. "
+                             "The ChatVoice role must sit above these roles in Discord.")
         self.boxes = {}
         for key, label in (("role_verified", "Verified (after linking)"), ("role_regular", "Regular (after N messages)"),
                            ("role_supporter", "Supporter (after a paid message)")):
@@ -122,14 +193,15 @@ class DiscordPage(QScrollArea):
             cb.addItem("(none)", "")
             self.boxes[key] = cb
             lab = QLabel(label)
+            lab.setObjectName("settingName")
             lab.setMinimumWidth(210)
             if key == "role_regular":
                 self.n = QSpinBox()
                 self.n.setRange(1, 100000)
                 self.n.setValue(int(self.s.get("regular_msgs")))
-                cl.addWidget(_row(lab, cb, self.n, QLabel("messages")))
+                cl.addWidget(hrow(lab, cb, self.n, QLabel("messages")))
             else:
-                cl.addWidget(_row(lab, cb))
+                cl.addWidget(hrow(lab, cb))
         load = QPushButton("Load my roles")
         load.clicked.connect(self.load_roles)
         save = QPushButton("Save rules")
@@ -137,59 +209,102 @@ class DiscordPage(QScrollArea):
         save.clicked.connect(self.save_rules)
         self.rstatus = QLabel("")
         self.rstatus.setObjectName("sub")
-        cl.addWidget(_row(load, save, self.rstatus))
-        advanced_lay.addWidget(c)
+        cl.addWidget(hrow(load, save, self.rstatus))
+        al.addWidget(c)
 
-        c, cl = _card("Link page for chat-activity roles (optional)",
-                      "Share this link in your Discord and stream description. Viewers log in with Discord, get a code, "
-                      "and type  !link CODE  in your stream chat. That proves which chat account is theirs.")
-        self.link = QLineEdit()
-        self.link.setReadOnly(True)
-        copy = QPushButton("Copy")
-        copy.clicked.connect(lambda: QGuiApplication.clipboard().setText(self.link.text()))
-        cl.addWidget(_row(self.link, copy))
-        advanced_lay.addWidget(c)
+        c, cl = section_card("Link page for chat-activity roles",
+                             "Share this link in Discord and your stream description. Viewers log in with Discord, get a code, "
+                             "and type !link CODE in your stream chat.")
+        wrap, self.link = copy_row("", "Connect Discord first")
+        cl.addWidget(wrap)
+        al.addWidget(c)
         self.update_link()
 
-        c, cl = _card("Discord announcements (optional)",
-                      "Create a webhook in Discord: channel settings > Integrations > Webhooks > Copy URL.")
-        self.hook = QLineEdit(self.s.get("webhook_url"))
-        self.hook.setPlaceholderText("https://discord.com/api/webhooks/...")
-        self.hook.editingFinished.connect(lambda: self.s.set("webhook_url", self.hook.text().strip()))
-        self.text = QLineEdit(self.s.get("announce_text"))
-        self.text.editingFinished.connect(lambda: self.s.set("announce_text", self.text.text()))
-        auto = QCheckBox("Announce automatically when I connect to a platform")
-        auto.setChecked(bool(self.s.get("announce_auto")))
-        auto.toggled.connect(lambda v: self.s.set("announce_auto", v))
-        paid = QCheckBox("Post Super Chats / Bits to Discord")
-        paid.setChecked(bool(self.s.get("post_super")))
-        paid.toggled.connect(lambda v: self.s.set("post_super", v))
-        now = QPushButton("Announce now")
-        now.clicked.connect(self.announce_now)
-        self.hstatus = QLabel("")
-        self.hstatus.setObjectName("sub")
-        for w in (self.hook, self.text, auto, paid, _row(now, self.hstatus)):
-            cl.addWidget(w)
-        advanced_lay.addWidget(c)
-        lay.addStretch(1)
-        bridge.done.connect(self.on_done)
+    def _toggle_advanced(self, on):
+        self.adv.setVisible(on)
+        self.adv_btn.setText("Hide advanced options" if on else "Show advanced options")
 
-    # ----- actions -----
-    def open_setup(self):
-        base = self.url.text().strip().rstrip("/")
-        self.s.set("cloud_url", base)
-        if base:
-            QDesktopServices.openUrl(QUrl(base + "/setup"))
+    # ------------------------------------------------------------------ state
+    @property
+    def connected(self):
+        return bool(self.s.get("cloud_token"))
+
+    def refresh_state(self):
+        if self.connected:
+            name = self.s.get("guild_name") or "your Discord server"
+            set_badge(self.badge, "\u25cf  Connected", "pillOn")
+            self.status.setText(name)
+            self.connect_btn.setText("Connect a different server")
+            _style(self.connect_btn, "quiet")
         else:
-            self.status.setText("Enter the cloud address first")
+            set_badge(self.badge, "\u25cf  Not connected", "pill")
+            self.status.setText("Add the bot to start.")
+            self.connect_btn.setText("Add ChatVoice bot to my server")
+            _style(self.connect_btn, "primary")
+        self.roles_card.setEnabled(self.connected)
+        done = sum(1 for src in SOURCES if self.src_link[src].text())
+        self.setup_btn.setText("Update roles and links" if done else "Create roles and invite links")
+        self.tip.setVisible(bool(done))
 
+    # ------------------------------------------------------------------ one-click connect
+    def connect(self):
+        base = self.s.get("cloud_url").strip().rstrip("/")
+        if not base:
+            self.status.setText("The ChatVoice cloud address is missing. Open Advanced options.")
+            return
+        self.loop = Loopback(self.bridge, "dc:connect")
+        back = self.loop.start()
+        set_badge(self.badge, "\u25cf  Waiting for Discord...", "pillWait")
+        self.status.setText("Finish in your browser: choose your server and press Authorize.")
+        QDesktopServices.openUrl(QUrl(base + "/setup?return=" + urllib.parse.quote(back, safe="")))
+
+    def _connected_from_browser(self, res):
+        if res.get("ok") != "1" or not res.get("token"):
+            set_badge(self.badge, "\u25cf  Not connected", "pillBad")
+            why = res.get("error") or ""
+            self.status.setText("Discord was not connected" + (" (%s)." % why if why else ".") + " Press the button to try again.")
+            return
+        self.s.set("cloud_token", res["token"])
+        self.s.set("guild_name", res.get("guild", ""))
+        self.s.set("guild_id", res.get("gid", ""))
+        self.key.setText(res["token"])
+        self.refresh_state()
+        self.update_link()
+        self.links.refresh()
+        self.test()
+
+    def setup_roles(self):
+        sources = [s for s in SOURCES if self.src_switch[s].isChecked()]
+        if not sources:
+            self.istatus.setText("Tick at least one platform.")
+            return
+        self.istatus.setText("Creating roles and invite links...")
+        self.setup_btn.setEnabled(False)
+        run_bg(self.bridge, "dc:setup", lambda: self.cloud.call("POST", "/api/discord/setup", {"sources": sources}))
+
+    def show_rules(self, rules):
+        for rule in rules or []:
+            src = str(rule.get("label", "")).lower()
+            if src in self.src_link:
+                self.src_link[src].setText("https://discord.gg/" + rule["code"])
+                self.src_role[src].setText("Role: " + self.role_names.get(rule["role"], NICE[src] + " Viewer"))
+                self.s.set("inv_" + src, "https://discord.gg/" + rule["code"])
+                self.s.set("inv_role_" + src, rule["role"])
+                if src in self.inv_edits:
+                    self.inv_edits[src].setText("https://discord.gg/" + rule["code"])
+        self.refresh_state()
+
+    # ------------------------------------------------------------------ actions (also used by Advanced)
     def _save_conn(self):
-        self.s.set("cloud_url", self.url.text().strip())
-        self.s.set("cloud_token", self.key.text().strip())
+        url, key = self.url.text().strip(), self.key.text().strip()
+        if url:
+            self.s.set("cloud_url", url)
+        if key:
+            self.s.set("cloud_token", key)
 
     def test(self):
         self._save_conn()
-        self.status.setText("Checking...")
+        self.status.setText("Checking..." if not self.connected else self.status.text())
         run_bg(self.bridge, "ui:test", lambda: self.cloud.call("GET", "/api/config"))
 
     def load_roles(self):
@@ -233,10 +348,9 @@ class DiscordPage(QScrollArea):
         self.s.set("announce_text", self.text.text())
         self.hstatus.setText("Sending...")
         url, txt = self.s.get("webhook_url"), self.s.get("announce_text")
-        run_bg(self.bridge, "ui:hook", lambda: post_webhook(url, "🔴 " + txt))
+        run_bg(self.bridge, "ui:hook", lambda: post_webhook(url, "\U0001F534 " + txt))
 
     def auto_announce(self):
-        """Called by the main window when the first platform connects."""
         if self.s.get("announce_auto") and self.s.get("webhook_url") and not self._announced:
             self._announced = True
             self.announce_now()
@@ -244,14 +358,15 @@ class DiscordPage(QScrollArea):
     def post_paid(self, m):
         if self.s.get("post_super") and self.s.get("webhook_url"):
             where = "" if m.platform == "tip" else " on " + m.platform
-            txt = "💎 **%s** sent **%s**%s%s" % (m.author, m.amount, where, (": " + m.text[:300]) if m.text else "")
+            txt = "\U0001F48E **%s** sent **%s**%s%s" % (m.author, m.amount, where, (": " + m.text[:300]) if m.text else "")
             run_bg(self.bridge, "ui:hookpaid", lambda: post_webhook(self.s.get("webhook_url"), txt))
 
     def update_link(self):
         gid, base = self.s.get("guild_id"), self.s.get("cloud_url").strip().rstrip("/")
-        self.link.setText("%s/link/%s" % (base, gid) if gid and base else "Connect your server first (step 1)")
+        self.link.setText("%s/link/%s" % (base, gid) if gid and base else "")
 
     def _fill_roles(self, roles):
+        self.role_names = {r["id"]: r["name"] for r in roles}
         for src, cb in self.inv_boxes.items():
             saved = self.s.get("inv_role_" + src)
             cb.clear()
@@ -266,14 +381,38 @@ class DiscordPage(QScrollArea):
             for r in roles:
                 cb.addItem(r["name"], r["id"])
             cb.setCurrentIndex(max(0, cb.findData(saved)))
+        for src in SOURCES:                                   # show real role names on the simple view
+            rid = self.s.get("inv_role_" + src)
+            if rid in self.role_names and self.src_link[src].text():
+                self.src_role[src].setText("Role: " + self.role_names[rid])
 
+    # ------------------------------------------------------------------ answers
     def on_done(self, tag, res):
+        err = res.get("error")
+        if tag == "dc:connect":
+            return self._connected_from_browser(res)
+        if tag == "dc:setup":
+            self.setup_btn.setEnabled(True)
+            if err:
+                self.istatus.setText(err)
+                return
+            self.role_names.update({x["roleId"]: x["roleName"] for x in res.get("sources", [])})
+            self.show_rules([{"label": x["label"], "code": x["invite"].rsplit("/", 1)[-1], "role": x["roleId"]} for x in res.get("sources", [])])
+            made = sum(1 for x in res.get("sources", []) if x.get("roleCreated"))
+            self.istatus.setText("Done. %d invite link(s) ready%s." % (len(res.get("sources", [])), ", %d new role(s) created" % made if made else ""))
+            self.load_roles()
+            return
         if not tag.startswith("ui:"):
             return
-        err = res.get("error")
         if tag == "ui:test":
             if err:
-                self.status.setText(err)
+                if self.connected and "bad server key" in err:
+                    self.s.set("cloud_token", "")
+                    self.key.setText("")
+                    self.refresh_state()
+                    self.status.setText("The saved connection is no longer valid. Add the bot again.")
+                else:
+                    self.status.setText(err)
                 return
             self.s.set("guild_id", res["guildId"])
             self.s.set("guild_name", res["guildName"])
@@ -281,15 +420,10 @@ class DiscordPage(QScrollArea):
             for k, name in (("role_verified", "verifiedRole"), ("role_regular", "regularRole"), ("role_supporter", "supporterRole")):
                 if name in cfg:
                     self.s.set(k, cfg[name])
-            for rule in cfg.get("inviteRules", []) or []:
-                src = str(rule.get("label", "")).lower()
-                if src in self.inv_edits:
-                    self.inv_edits[src].setText("https://discord.gg/" + rule["code"])
-                    self.s.set("inv_" + src, "https://discord.gg/" + rule["code"])
-                    self.s.set("inv_role_" + src, rule["role"])
+            self.show_rules(cfg.get("inviteRules", []))
             if cfg.get("regularMsgs"):
                 self.n.setValue(int(cfg["regularMsgs"]))
-            self.status.setText("Connected to %s" % res["guildName"])
+            self.refresh_state()
             self.update_link()
             self.links.refresh()
             self.load_roles()

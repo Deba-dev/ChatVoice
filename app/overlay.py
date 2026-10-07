@@ -19,9 +19,15 @@ class Overlay:
         self.lock = threading.Lock()
         self.next_id = 1
         self.events = {"alert": deque(maxlen=60), "chat": deque(maxlen=60)}
+        self.states = {"music": {"title": "", "artist": "", "playing": False}}
 
     # ----- data -----
     def push(self, kind, data):
+        if kind in self.states:                              # a 'state' (like the song playing now), not a queue of events
+            with self.lock:
+                self.states[kind] = dict(data)
+                self.next_id += 1
+            return self.next_id - 1
         with self.lock:
             ev = dict(data, id=self.next_id)
             self.next_id += 1
@@ -29,6 +35,9 @@ class Overlay:
             return ev["id"]
 
     def poll(self, kind, after):
+        if kind in self.states:
+            with self.lock:
+                return {"events": [], "latest": self.next_id - 1, "state": dict(self.states[kind]), "cfg": self.cfg_fn()}
         with self.lock:
             latest = self.next_id - 1
             evs = [] if after < 0 else [e for e in self.events[kind] if e["id"] > after]
@@ -58,7 +67,7 @@ class Overlay:
                 u = urllib.parse.urlparse(self.path)
                 if u.path in ("/", ""):
                     return self._send(200, INDEX, "text/html; charset=utf-8")
-                if u.path in ("/alert", "/chat"):
+                if u.path in ("/alert", "/chat", "/music"):
                     return self._send(200, page(u.path[1:]), "text/html; charset=utf-8")
                 if u.path == "/poll":
                     q = urllib.parse.parse_qs(u.query)
@@ -67,7 +76,7 @@ class Overlay:
                         after = int(q.get("after", ["-1"])[0])
                     except ValueError:
                         after = -1
-                    if kind not in overlay.events:
+                    if kind not in overlay.events and kind not in overlay.states:
                         return self._send(400, "{}", "application/json")
                     return self._send(200, json.dumps(overlay.poll(kind, after)), "application/json")
                 m = re.fullmatch(r"/fonts/(Poppins-[A-Za-z]+\.ttf)", u.path)

@@ -2,11 +2,11 @@
 [Setup]
 AppId=ChatVoice
 AppName=ChatVoice
-AppVersion=0.4.0
+AppVersion=0.5.0
 AppPublisher=itsmeblitz
 AppCopyright=Created by itsmeblitz
-AppVerName=ChatVoice 0.4.0 BETA
-VersionInfoVersion=0.4.0.0
+AppVerName=ChatVoice 0.5.0 BETA
+VersionInfoVersion=0.5.0.0
 VersionInfoCompany=itsmeblitz
 VersionInfoDescription=ChatVoice (BETA) installer
 DefaultDirName={autopf}\ChatVoice

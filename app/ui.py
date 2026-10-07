@@ -4,8 +4,8 @@ import os
 import sys
 import time
 
-from PySide6.QtCore import QEasingCurve, QParallelAnimationGroup, QPropertyAnimation, Qt, QTimer, QUrl
-from PySide6.QtGui import QColor, QDesktopServices, QFont, QFontDatabase, QTextBlockFormat, QTextCursor
+from PySide6.QtCore import Property, QEasingCurve, QEvent, QParallelAnimationGroup, QPropertyAnimation, QSize, Qt, QTimer, QUrl
+from PySide6.QtGui import QColor, QDesktopServices, QFont, QFontDatabase, QIcon, QPainter, QPalette, QPen, QPixmap, QTextBlockFormat, QTextCursor, QTextOption
 from PySide6.QtWidgets import (QApplication, QButtonGroup, QCheckBox, QColorDialog, QComboBox, QFrame, QGraphicsDropShadowEffect, QGraphicsOpacityEffect, QGridLayout, QHBoxLayout,
                                QLabel, QLineEdit, QPlainTextEdit, QPushButton, QScrollArea, QSlider, QSpinBox, QStackedWidget,
                                QTextEdit, QVBoxLayout, QWidget)
@@ -17,8 +17,12 @@ from .overlay import Overlay
 from .overlay_ui import OverlayPage
 from .payments import TipPoller
 from .payments_page import PaymentsPage
-from .ytmod import GoogleAuth, YtModerator
+from .icons import nav_icon
+from .music import MusicPlayer
+from .music_page import MusicPage
+from .ytmod import YtModerator
 from .ytmod_page import YtModPage
+from PySide6.QtCore import QSize
 from .models import Message
 from .moderation import Moderator
 from .platforms import Hub, KickSource, TwitchSource, YouTubeSource
@@ -30,23 +34,91 @@ from .version import CREATOR, STAGE, VERSION, label
 
 COLORS = {"youtube": "#ff4d4d", "twitch": "#9146ff", "kick": "#53fc18", "test": "#00d4ff", "tip": "#ffd24d"}
 TAGS = {"youtube": "YT", "twitch": "TW", "kick": "KICK", "test": "TEST", "tip": "TIP"}
-PAGES = ("Connect", "Live chat", "Voice", "Moderation", "Discord", "Payments", "YouTube mod", "OBS overlays")
-NAV_MARK = ("◎", "☰", "♫", "⌗", "◈", "₹", "▶", "▣")
+PAGES = ("Connect", "Live chat", "Voice", "Moderation", "Discord", "Payments", "YouTube mod", "OBS overlays", "Music")
+NAV_MARK = ("◎", "☰", "♫", "⌗", "◈", "₹", "▶", "▣", "♪")
 PAGE_BLURB = (
     "Connect your streaming platforms and manage live chat from one place.",
     "Messages that will be read aloud, and the ones moderation skipped.",
-    "Choose the voice that speaks your chat.",
+    "Choose and customize the voice that speaks your chat.",
     "Decide which messages are read and which are skipped.",
-    "Link viewers and send roles through your server.",
+    "Add the bot, and viewers get roles for where they joined from.",
     "Hear paid messages and tips on stream.",
-    "Moderate YouTube chat from this PC.",
-    "Browser sources for alerts and chat in OBS.",
+    "Add the ChatVoice bot to your channel and keep your chat clean.",
+    "Browser sources for alerts, chat and the song playing, or your StreamElements overlay.",
+    "Play no-copyright music on stream, quieter while your chat is read aloud.",
 )
 MARKS = {"youtube": ("YT", "#ff4d4d"), "twitch": ("TW", "#9146ff"), "kick": ("KK", "#53fc18")}
 CHAT_FONTS = ("Poppins", "Arial", "Segoe UI", "Calibri", "Verdana", "Tahoma", "Consolas", "Cascadia Mono", "Inter", "Roboto", "DM Sans", "Space Grotesk", "JetBrains Mono")
 CHAT_WEIGHTS = (("Light", 300), ("Regular", 400), ("Medium", 500), ("Semi Bold", 600), ("Bold", 700), ("Extra Bold", 800))
 CHAT_TRANSFORMS = (("Normal", "normal"), ("Uppercase", "upper"), ("Lowercase", "lower"), ("Capitalize", "caps"))
 CHAT_ALIGNS = (("Left", "left"), ("Center", "center"), ("Right", "right"))
+
+
+def edit_icon():
+    """A small pencil, drawn here so the app does not need an icon package."""
+    pix = QPixmap(16, 16)
+    pix.fill(Qt.transparent)
+    painter = QPainter(pix)
+    painter.setRenderHint(QPainter.Antialiasing)
+    pen = QPen(QColor("#f4f4f8"))
+    pen.setWidthF(1.5)
+    pen.setCapStyle(Qt.RoundCap)
+    pen.setJoinStyle(Qt.RoundJoin)
+    painter.setPen(pen)
+    painter.drawLine(3, 13, 12, 4)
+    painter.drawLine(11, 3, 14, 6)
+    painter.drawLine(2, 14, 5, 11)
+    painter.end()
+    return QIcon(pix)
+
+
+class ChatFeed(QTextEdit):
+    """Live chat text. The hint is drawn in the full box so a large font wraps instead of being clipped."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.hint = ""
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        if not self.hint or not self.document().isEmpty():
+            return
+        painter = QPainter(self.viewport())
+        painter.setPen(self.palette().color(QPalette.ColorRole.PlaceholderText))
+        painter.setFont(self.font())
+        margin = int(self.document().documentMargin())
+        painter.drawText(self.viewport().rect().adjusted(margin, margin, -margin, -margin), Qt.TextWordWrap | Qt.AlignTop, self.hint)
+
+
+class ChatStage(QWidget):
+    """Chat box that keeps the text-style button and popup positioned on itself."""
+
+    def __init__(self):
+        super().__init__()
+        self.feed = None
+        self.trigger = None
+        self.popup = None
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self.place()
+
+    def place(self):
+        if self.feed is None:
+            return
+        self.feed.setGeometry(0, 0, self.width(), self.height())
+        if self.trigger is not None:
+            self.trigger.move(self.width() - self.trigger.width() - 10, 10)
+            self.trigger.raise_()
+        if self.popup is not None and self.popup.isVisible():
+            self.place_popup()
+
+    def place_popup(self):
+        margin = 24
+        width = min(320, max(240, self.width() - margin * 2))
+        height = min(560, max(180, self.height() - margin * 2))
+        self.popup.setGeometry((self.width() - width) // 2, (self.height() - height) // 2, width, height)
+        self.popup.raise_()
 
 
 def available_chat_fonts():
@@ -67,6 +139,101 @@ ROOT = getattr(sys, "_MEIPASS", os.path.dirname(os.path.dirname(os.path.abspath(
 
 def esc(s):
     return html.escape(s or "")
+
+
+class Switch(QCheckBox):
+    """A sliding on/off control. It still saves like a checkbox."""
+
+    def __init__(self):
+        super().__init__()
+        self.setFixedSize(40, 22)
+        self.setCursor(Qt.PointingHandCursor)
+        self._knob = 0.0
+        self._accent = QColor("#7c5cff")
+        self._anim = QPropertyAnimation(self, b"knob", self)
+        self._anim.setDuration(140)
+        self._anim.setEasingCurve(QEasingCurve.OutCubic)
+        self.toggled.connect(self._slide)
+
+    def knob(self):
+        return self._knob
+
+    def setKnob(self, value):
+        self._knob = value
+        self.update()
+
+    knob = Property(float, knob, setKnob)
+
+    def set_accent(self, color):
+        self._accent = QColor(color)
+        self.update()
+
+    def setChecked(self, on):
+        self.blockSignals(True)
+        super().setChecked(on)
+        self.blockSignals(False)
+        self._knob = 1.0 if on else 0.0
+        self.update()
+
+    def _slide(self, on):
+        self._anim.stop()
+        self._anim.setStartValue(self._knob)
+        self._anim.setEndValue(1.0 if on else 0.0)
+        self._anim.start()
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(self._accent if self.isChecked() else QColor(255, 255, 255, 36))
+        painter.drawRoundedRect(0, 2, 40, 18, 9, 9)
+        painter.setBrush(QColor("#ffffff"))
+        painter.drawEllipse(int(2 + self._knob * 18), 4, 14, 14)
+
+
+class VoiceBoard(QWidget):
+    """Places voice cards in two columns, and one column when the page is narrow."""
+
+    def __init__(self):
+        super().__init__()
+        self._wide = None
+        self._pairs = []
+        self._grid = QGridLayout(self)
+        self._grid.setContentsMargins(0, 0, 0, 0)
+        self._grid.setHorizontalSpacing(12)
+        self._grid.setVerticalSpacing(12)
+
+    def set_cards(self, pairs, full):
+        self._pairs = pairs
+        self._full = full
+        self._arrange(self.width() >= 760)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._arrange(self.width() >= 760)
+
+    def _arrange(self, wide):
+        if wide == self._wide:
+            return
+        self._wide = wide
+        while self._grid.count():
+            self._grid.takeAt(0)
+        if wide:
+            for index, (left, right) in enumerate(self._pairs):
+                self._grid.addWidget(left, index, 0)
+                self._grid.addWidget(right, index, 1)
+            self._grid.addWidget(self._full, len(self._pairs), 0, 1, 2)
+            self._grid.setColumnStretch(0, 1)
+            self._grid.setColumnStretch(1, 1)
+        else:
+            row = 0
+            for left, right in self._pairs:
+                self._grid.addWidget(left, row, 0)
+                self._grid.addWidget(right, row + 1, 0)
+                row += 2
+            self._grid.addWidget(self._full, row, 0)
+            self._grid.setColumnStretch(0, 1)
+            self._grid.setColumnStretch(1, 0)
 
 
 def labeled(text, widget, hint=""):
@@ -230,12 +397,15 @@ class MainWindow(QWidget):
         self.discord = DiscordPage(self.s, self.cloud, self.bridge, self.links)
         self.poller = TipPoller(self.s, self.cloud, self.bridge)
         self.payments = PaymentsPage(self.s, self.cloud, self.bridge, self.poller)
-        self.gauth = GoogleAuth(self.s)
-        self.ytmod = YtModerator(self.s, self.gauth, self.bridge)
-        self.ytpage = YtModPage(self.s, self.gauth, self.bridge, self.ytmod)
+        self.ytmod = YtModerator(self.s, self.bridge)
+        self.ytpage = YtModPage(self.s, self.ytmod)
+        self.yt_beat = QTimer(self)                       # keeps the free-hosted bot awake while you stream on YouTube
+        self.yt_beat.timeout.connect(self.ytmod.refresh_info)
         self.overlay = Overlay(self.s, os.path.join(ROOT, "assets", "fonts"), self._overlay_cfg)
         self.overlay.start()
         self.ovpage = OverlayPage(self.s, self.overlay)
+        self.music = MusicPlayer(self.s, self.overlay.push)
+        self.musicpage = MusicPage(self.s, self.music, self.overlay)
         self.updater = Updater(self.s)
         self.pending_update = None
 
@@ -252,7 +422,7 @@ class MainWindow(QWidget):
         self.banner = self._build_banner()
         right.addWidget(self.banner)
         self.stack = QStackedWidget()
-        for page in (self._page_connect(), self._page_feed(), self._page_voice(), self._page_mod(), self.discord, self.payments, self.ytpage, self.ovpage):
+        for page in (self._page_connect(), self._page_feed(), self._page_voice(), self._page_mod(), self.discord, self.payments, self.ytpage, self.ovpage, self.musicpage):
             self.stack.addWidget(page)
         right.addWidget(self.stack, 1)
         root.addWidget(canvas, 1)
@@ -272,6 +442,9 @@ class MainWindow(QWidget):
         self.poller.notice.connect(lambda t: self.feed.append("<span style='color:#ffd24d'>%s</span>" % esc(t)))
         self.ytmod.notice.connect(lambda t: self.feed.append("<span style='color:#ff8a5c'>YouTube mod: %s</span>" % esc(t)))
         QTimer.singleShot(2500, self.poller.apply)
+        self.speaker.busy_changed.connect(self.music.duck)                     # music gets quieter while a message is read aloud
+        self.music.notice.connect(lambda t: self.feed.append("<span style='color:#7cf0c0'>Music: %s</span>" % esc(t)))
+        QTimer.singleShot(1500, lambda: self.music.next() if self.s.get("music_autoplay") and self.music.tracks else None)
         self.updater.found.connect(self._update_found)
         self.updater.status.connect(self._update_status)
         self.updater.message.connect(lambda t: self.feed.append("<span style='color:#7cf0c0'>Update: %s</span>" % esc(t)))
@@ -295,13 +468,15 @@ class MainWindow(QWidget):
         lay.addWidget(self.logo)
         self.nav = QButtonGroup(self)
         self.nav.setExclusive(True)
-        groups = (("Workspace", (0, 1, 2)), ("Tools", (3, 4, 5, 6, 7)))
+        groups = (("Workspace", (0, 1, 2, 8)), ("Tools", (3, 4, 5, 6, 7)))
         for title, indexes in groups:
             g = QLabel(title.upper())
             g.setObjectName("group")
             lay.addWidget(g)
             for i in indexes:
-                b = QPushButton("%s    %s" % (NAV_MARK[i], PAGES[i]))
+                b = QPushButton("  " + PAGES[i])
+                b.setIcon(nav_icon(i))
+                b.setIconSize(QSize(18, 18))
                 b.setObjectName("nav")
                 b.setCheckable(True)
                 b.setCursor(Qt.PointingHandCursor)
@@ -523,24 +698,107 @@ class MainWindow(QWidget):
         lay = QHBoxLayout(page)
         lay.setContentsMargins(0, 8, 0, 0)
         lay.setSpacing(12)
-        self.feed = QTextEdit()
+        self.chat_box = ChatStage()
+        self.feed = ChatFeed(self.chat_box)
         self.feed.setObjectName("feed")
         self.feed.setReadOnly(True)
         self.feed.document().setMaximumBlockCount(300)
-        self.feed.setPlaceholderText("Chat messages appear here. Grey lines were skipped by moderation.")
-        lay.addWidget(self.feed, 1)
-        lay.addWidget(self._chat_style_panel())
+        self.feed.hint = "Chat messages appear here. Grey lines were skipped by moderation."
+        self.feed.setLineWrapMode(QTextEdit.LineWrapMode.WidgetWidth)
+        self.feed.setWordWrapMode(QTextOption.WrapMode.WrapAtWordBoundaryOrAnywhere)
+        self.feed.document().setDocumentMargin(12)
+        self.feed.setViewportMargins(0, 42, 0, 0)
+        self.chat_style_btn = QPushButton(self.chat_box)
+        self.chat_style_btn.setObjectName("chatStyle")
+        self.chat_style_btn.setIcon(edit_icon())
+        self.chat_style_btn.setIconSize(QSize(16, 16))
+        self.chat_style_btn.setCursor(Qt.PointingHandCursor)
+        self.chat_style_btn.setFixedSize(32, 30)
+        self.chat_style_btn.setToolTip("Text style")
+        self.chat_style_btn.setAccessibleName("Text style")
+        self.chat_style_btn.setCheckable(True)
+        self.chat_style_btn.setStyleSheet(
+            "QPushButton { background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.12);"
+            " border-radius: 8px; padding: 0; font-size: 13px; font-weight: 700; }"
+            "QPushButton:hover { background: rgba(255,255,255,0.12); border: 1px solid rgba(255,255,255,0.22); }"
+            "QPushButton:focus { border: 1px solid rgba(255,255,255,0.55); }"
+            "QPushButton:checked { background: rgba(255,255,255,0.16); border: 1px solid rgba(255,255,255,0.40); }")
+        self.chat_style_btn.clicked.connect(self._toggle_chat_style)
+        self.chat_box.feed = self.feed
+        self.chat_box.trigger = self.chat_style_btn
+        self.chat_popup = self._chat_style_popup()
+        self.chat_box.popup = self.chat_popup
+        self.chat_popup.hide()
+        lay.addWidget(self.chat_box, 1)
+        QApplication.instance().installEventFilter(self)
         self._apply_chat_style()
         return page
+
+    def _set_chat_style_open(self, open_):
+        self.chat_style_btn.setChecked(open_)
+        if open_:
+            self.chat_box.place_popup()
+            self.chat_popup.show()
+        else:
+            self.chat_popup.hide()
+
+    def _toggle_chat_style(self):
+        self._set_chat_style_open(not self.chat_popup.isVisible())
+
+    def _style_popup_hit(self, widget):
+        if widget is None:
+            return False
+        if widget is self.chat_style_btn or widget is self.chat_popup or self.chat_popup.isAncestorOf(widget):
+            return True
+        active = QApplication.activePopupWidget()
+        return active is not None and (widget is active or active.isAncestorOf(widget))
+
+    def eventFilter(self, obj, event):
+        popup = getattr(self, "chat_popup", None)
+        if event.type() == QEvent.Wheel and isinstance(obj, (QSlider, QComboBox)) and QApplication.activePopupWidget() is None:
+            voice = getattr(self, "voice_scroll", None)
+            if popup is not None and popup.isAncestorOf(obj):
+                bar = self.chat_style_scroll.verticalScrollBar()
+                bar.setValue(bar.value() - event.angleDelta().y())
+                return True
+            if voice is not None and voice.isAncestorOf(obj):
+                bar = voice.verticalScrollBar()
+                bar.setValue(bar.value() - event.angleDelta().y())
+                return True
+        if popup is not None and popup.isVisible():
+            if event.type() == QEvent.KeyPress and event.key() == Qt.Key_Escape:
+                self._set_chat_style_open(False)
+                return True
+            if event.type() == QEvent.MouseButtonPress and not self._style_popup_hit(QApplication.widgetAt(event.globalPosition().toPoint())):
+                self._set_chat_style_open(False)
+        return super().eventFilter(obj, event)
+
+    def _chat_style_popup(self):
+        popup = QFrame(self.chat_box)
+        popup.setObjectName("chatPop")
+        popup.setStyleSheet("QFrame#chatPop { background: rgba(14,16,24,0.96); border: 1px solid rgba(255,255,255,0.12); border-radius: 16px; }")
+        shadow = QGraphicsDropShadowEffect(popup)
+        shadow.setBlurRadius(28)
+        shadow.setOffset(0, 8)
+        shadow.setColor(QColor(0, 0, 0, 160))
+        popup.setGraphicsEffect(shadow)
+        lay = QVBoxLayout(popup)
+        lay.setContentsMargins(8, 8, 8, 8)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setWidget(self._chat_style_panel())
+        self.chat_style_scroll = scroll
+        lay.addWidget(scroll)
+        return popup
 
     def _chat_style_panel(self):
         panel = QFrame()
         panel.setObjectName("tile")
-        panel.setFixedWidth(232)
         outer = QVBoxLayout(panel)
         outer.setContentsMargins(12, 12, 12, 12)
         outer.setSpacing(6)
-        title = QLabel("Text style")
+        title = QLabel("Text Style")
         title.setStyleSheet("font-size:14px; font-weight:650;")
         outer.addWidget(title)
         note = QLabel("Live chat messages only")
@@ -611,13 +869,7 @@ class MainWindow(QWidget):
         reset.setCursor(Qt.PointingHandCursor)
         reset.clicked.connect(self._reset_chat_style)
         outer.addWidget(reset)
-        outer.addStretch(1)
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.NoFrame)
-        scroll.setFixedWidth(248)
-        scroll.setWidget(panel)
-        return scroll
+        return panel
 
     def _style_label(self, text):
         lab = QLabel(text)
@@ -678,7 +930,7 @@ class MainWindow(QWidget):
         font.setWeight(QFont.Weight(weight) if weight in (100, 200, 300, 400, 500, 600, 700, 800, 900) else QFont.Weight.Normal)
         font.setItalic(italic)
         font.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, track)
-        css = "QTextEdit#feed { color: %s; font-family: \"%s\"; font-size: %dpx; font-weight: %d; font-style: %s; background: rgba(0,0,0,0.35); border: 1px solid rgba(255,255,255,0.06); border-radius: 10px; }" % (
+        css = "QTextEdit#feed { color: %s; font-family: \"%s\"; font-size: %dpx; font-weight: %d; font-style: %s; background: rgba(0,0,0,0.35); border: 1px solid rgba(255,255,255,0.06); border-radius: 10px; padding: 0; }" % (
             color.name(QColor.NameFormat.HexArgb), font.family(), size, weight, "italic" if italic else "normal")
         self.feed.setFont(font)
         self.feed.setStyleSheet(css)
@@ -733,37 +985,147 @@ class MainWindow(QWidget):
         cb.currentIndexChanged.connect(lambda _: self.s.set(key, cb.currentData()))
         return cb
 
+    def _voice_section(self, title, detail):
+        card = QFrame()
+        card.setObjectName("tile")
+        lay = QVBoxLayout(card)
+        lay.setContentsMargins(18, 16, 18, 16)
+        lay.setSpacing(8)
+        head = QLabel(title)
+        head.setObjectName("voiceTitle")
+        note = QLabel(detail)
+        note.setObjectName("voiceNote")
+        note.setWordWrap(True)
+        lay.addWidget(head)
+        lay.addWidget(note)
+        return card, lay
+
+    def _voice_field(self, title, detail, widget):
+        wrap = QWidget()
+        lay = QVBoxLayout(wrap)
+        lay.setContentsMargins(0, 4, 0, 0)
+        lay.setSpacing(2)
+        name = QLabel(title)
+        name.setObjectName("voiceName")
+        note = QLabel(detail)
+        note.setObjectName("voiceNote")
+        note.setWordWrap(True)
+        if widget.maximumWidth() > 1000:
+            widget.setMaximumWidth(420)
+        lay.addWidget(name)
+        lay.addWidget(note)
+        lay.addWidget(widget)
+        return wrap
+
+    def _voice_switch(self, title, detail, key):
+        row = QWidget()
+        lay = QHBoxLayout(row)
+        lay.setContentsMargins(0, 6, 0, 6)
+        text = QVBoxLayout()
+        text.setSpacing(1)
+        name = QLabel(title)
+        name.setObjectName("voiceName")
+        name.setWordWrap(True)
+        note = QLabel(detail)
+        note.setObjectName("voiceNote")
+        note.setWordWrap(True)
+        text.addWidget(name)
+        text.addWidget(note)
+        switch = Switch()
+        switch.set_accent(THEMES.get(self.s.get("theme"), THEMES[DEFAULT_THEME])["a1"])
+        switch.setChecked(bool(self.s.get(key)))
+        switch.toggled.connect(lambda on, k=key: self.s.set(k, on))
+        lay.addLayout(text, 1)
+        lay.addWidget(switch, 0, Qt.AlignTop)
+        return row
+
+    def _voice_meter(self, title, detail, key, lo, hi, fmt):
+        wrap = QWidget()
+        lay = QVBoxLayout(wrap)
+        lay.setContentsMargins(0, 6, 0, 2)
+        lay.setSpacing(4)
+        top = QHBoxLayout()
+        name = QLabel(title)
+        name.setObjectName("voiceName")
+        value = QLabel()
+        value.setObjectName("voiceValue")
+        top.addWidget(name)
+        top.addStretch(1)
+        top.addWidget(value)
+        note = QLabel(detail)
+        note.setObjectName("voiceNote")
+        note.setWordWrap(True)
+        slider = self._bind_slider(key, lo, hi)
+        value.setText(fmt(slider.value()))
+        slider.valueChanged.connect(lambda v, f=fmt, lab=value: lab.setText(f(v)))
+        lay.addLayout(top)
+        lay.addWidget(note)
+        lay.addWidget(slider)
+        return wrap
+
     def _page_voice(self):
         page = QWidget()
         page.setObjectName("page")
-        lay = QVBoxLayout(page)
-        lay.setContentsMargins(0, 8, 0, 0)
+        outer = QVBoxLayout(page)
+        outer.setContentsMargins(0, 8, 0, 0)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        self.voice_scroll = scroll
+        inner = QWidget()
+        lay = QVBoxLayout(inner)
+        lay.setContentsMargins(0, 0, 0, 8)
+        lay.setSpacing(12)
+
+        engine, engine_lay = self._voice_section("Voice engine", "Choose the speech engine used to read your chat.")
         eng = QComboBox()
         eng.addItem("Neural voices (online, best quality)", "neural")
         eng.addItem("Windows voices (offline)", "windows")
         eng.setCurrentIndex(max(0, eng.findData(self.s.get("engine"))))
         eng.currentIndexChanged.connect(lambda _: self.s.set("engine", eng.currentData()))
-        lay.addWidget(labeled("Voice engine", eng))
-        lay.addWidget(labeled("Hindi (Devanagari) voice", self._voice_combo("hi_voice")))
-        lay.addWidget(labeled("Hinglish / English voice", self._voice_combo("en_voice")))
-        lay.addWidget(self._bind_check("Different voice for each viewer", "per_viewer"))
-        lay.addWidget(labeled("Speed", self._bind_slider("rate", -5, 5)))
-        lay.addWidget(labeled("Volume", self._bind_slider("volume", 0, 100)))
-        lay.addWidget(self._bind_check("Say the viewer's name first", "read_name"))
-        lay.addWidget(self._bind_check("Read Super Chats / Bits (paid messages are never dropped)", "read_super"))
-        lay.addWidget(labeled("Max queued messages", self._bind_spin("queue_max", 1, 20),
-                              "older ones are dropped when chat is fast"))
-        row = QHBoxLayout()
-        b1 = QPushButton("Edit Hinglish word list")
-        b1.clicked.connect(lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(self.words_path)))
-        b2 = QPushButton("Reload word list")
-        b2.clicked.connect(lambda: self.feed.append("<span style='color:#8a93a8'>Loaded %d short-form words</span>"
-                                                      % hinglish.load_words(self.words_path)))
-        row.addWidget(b1)
-        row.addWidget(b2)
-        row.addStretch(1)
-        lay.addLayout(row)
+        engine_lay.addWidget(self._voice_field("Voice engine", "Neural voices need the internet. Windows voices work offline.", eng))
+        lay.addWidget(engine)
+
+        languages, lang_lay = self._voice_section("Language voices", "Pick who speaks each kind of message.")
+        lang_lay.addWidget(self._voice_field("Hindi", "Choose the voice for Devanagari messages.", self._voice_combo("hi_voice")))
+        lang_lay.addWidget(self._voice_field("Hinglish / English", "Choose the voice for Latin-script messages.", self._voice_combo("en_voice")))
+
+        options, opt_lay = self._voice_section("Voice options", "Small choices for how messages are spoken.")
+        opt_lay.addWidget(self._voice_switch("Different voice for each viewer", "Use a different voice when possible for each viewer.", "per_viewer"))
+        opt_lay.addWidget(self._voice_switch("Say the viewer's name first", "Speak the viewer's name before reading their message.", "read_name"))
+        opt_lay.addWidget(self._voice_switch("Read Super Chats / Bits", "Always read paid messages, even when normal messages are skipped.", "read_super"))
+
+        playback, play_lay = self._voice_section("Playback", "How fast and how loud the voice sounds.")
+        play_lay.addWidget(self._voice_meter("Speed", "Controls how quickly messages are spoken.", "rate", -5, 5, lambda v: "%.1f×" % (1 + v * 0.1)))
+        play_lay.addWidget(self._voice_meter("Volume", "Controls the voice output level.", "volume", 0, 100, lambda v: "%d%%" % v))
+
+        queue, queue_lay = self._voice_section("Message queue", "Controls how many chat messages can wait to be spoken.")
+        spin = self._bind_spin("queue_max", 1, 20)
+        spin.setMaximumWidth(88)
+        queue_lay.addWidget(self._voice_field("Maximum messages in queue", "Older messages are removed when chat becomes too fast.", spin))
+
+        words, word_lay = self._voice_section("Word list", "Manage words and pronunciation used when reading Hinglish chat.")
+        buttons = QHBoxLayout()
+        edit = QPushButton("Edit word list")
+        edit.setObjectName("primary")
+        edit.setCursor(Qt.PointingHandCursor)
+        edit.clicked.connect(lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(self.words_path)))
+        reload_words = QPushButton("Reload word list")
+        reload_words.setObjectName("quiet")
+        reload_words.setCursor(Qt.PointingHandCursor)
+        reload_words.clicked.connect(lambda: self.feed.append("<span style='color:#8a93a8'>Loaded %d short-form words</span>"
+                                                               % hinglish.load_words(self.words_path)))
+        buttons.addWidget(edit)
+        buttons.addWidget(reload_words)
+        buttons.addStretch(1)
+        word_lay.addLayout(buttons)
+
+        board = VoiceBoard()
+        board.set_cards([(languages, options), (playback, queue)], words)
+        lay.addWidget(board)
         lay.addStretch(1)
+        scroll.setWidget(inner)
+        outer.addWidget(scroll)
         return page
 
     def _page_mod(self):
@@ -805,6 +1167,8 @@ class MainWindow(QWidget):
         self.setStyleSheet(build_qss(name))
         self.logo.setText('<span style="color:%s">🎙 Chat</span><span style="color:%s">Voice</span>' % (t["a3"], t["a2"]))
         self.fx.recolor(t["a1"])
+        for switch in self.findChildren(Switch):
+            switch.set_accent(t["a1"])
 
     def _lite(self, on):
         self.s.set("lite_mode", on)
@@ -871,6 +1235,12 @@ class MainWindow(QWidget):
         self._sync_summary()
         if ok:
             self.discord.auto_announce()
+        if platform == "youtube":
+            if ok and self.ytmod.verified:
+                self.ytmod.refresh_info()
+                self.yt_beat.start(8 * 60 * 1000)
+            elif not ok:
+                self.yt_beat.stop()
         if self.connected and self.live.isHidden():
             self.live.show()
             self.pulse.start()
@@ -923,6 +1293,7 @@ class MainWindow(QWidget):
 
     def closeEvent(self, e):
         self.links.save()
+        self.music.stop()
         self.overlay.stop()
         for c in self.cards.values():
             c.source.stop()

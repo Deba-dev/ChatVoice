@@ -1,4 +1,4 @@
-ChatVoice (BETA)  -  Phase 4  -  v0.4.0
+ChatVoice (BETA)  -  Phase 5  -  v0.5.0
 Created by itsmeblitz
 Reads YouTube, Twitch and Kick chat aloud in Hindi / Hinglish / English, with moderation, Discord roles,
 payment alerts from the streamer's own payment page (Razorpay, Stripe, Cashfree or any tool), YouTube message deleting,
@@ -7,26 +7,28 @@ OBS overlays (alerts and chat on screen) and one-click self-updates.
 WHAT IS INSIDE
   main.py, app\           the Windows app (Python + PySide6)
   cloud\                  the free Cloudflare server (Discord roles, payment webhook)
-  youtube-bot\            hosted YouTube moderator service for Railway or Render
+  youtube-bot\            the hosted YouTube moderator bot (Node; runs free on Render)
   assets\                 icon and the Poppins font
   tests\                  automatic checks (node test.mjs for the cloud, python tests\test_app.py for the app)
   CLOUD-SETUP.txt         one-time cloud + Discord setup (you, once)
   PAYMENTS-SETUP.txt      Razorpay payment page and webhook
-  YT-MODERATION-SETUP.txt Google sign-in for deleting YouTube messages
-  youtube-bot\README.txt  deploy the hosted moderator to Railway or Render
+  YT-MODERATION-SETUP.txt add the bot to your channel and verify it (streamers) + how it is run
+  youtube-bot\README.txt  deploy the bot, free hosting, other hosting options
   GITHUB-BUILD-GUIDE.txt  turn the project into ChatVoice-Setup.exe, free
   UPDATING.txt            publish a new version; users update with one click
-  OBS-GUIDE.txt           voice, alerts and chat in OBS
+  OBS-GUIDE.txt           voice, alerts, chat and now-playing in OBS
+  MUSIC-GUIDE.txt         the no-copyright music player and where to get music
 
 PAGES IN THE APP
   Connect     paste your YouTube link, Twitch and Kick channel, press Connect (no logins needed to read chat)
   Live chat   combined feed; grey lines were skipped by moderation
   Voice       voices, speed, volume, "different voice per viewer", Hinglish word list
   Moderation  what gets read aloud: link / command / bot / repeat filters, blocked words
-  Discord     quick setup for invite-based roles; optional activity roles and announcements are under Advanced
+  Discord     one click to add the bot, one click to make roles and invite links; the rest is under Advanced
   Payments    payment alerts read aloud (Razorpay / Stripe / Cashfree / any tool)
-  YouTube mod sign in with Google to delete messages and time out repeat offenders
-  OBS overlays  alert and chat sources, or use your StreamElements overlay URL in OBS
+  YouTube mod add the ChatVoice bot to your channel, verify it is yours, choose the rules (like Nightbot)
+  OBS overlays  alert, chat and now-playing sources, or use your StreamElements overlay URL in OBS
+  Music       play no-copyright music (your own files), quieter while chat is read, now playing on stream
   Sidebar     Theme (4 colour themes) and Lite mode (turns off glow/fade animations for weak PCs or gaming)
 
 RUN IT (easiest)

@@ -26,6 +26,10 @@ QLabel#group { color: $mute; font-size: 10px; font-weight: 700; padding: 12px 16
 QLabel#title { font-size: 28px; font-weight: 650; }
 QLabel#sub { color: $mute; font-size: 13px; }
 QLabel#hint, QLabel#field { color: $mute; font-size: 12px; }
+QLabel#pageTitle, QLabel#voiceTitle { font-size: 17px; font-weight: 650; }
+QLabel#settingName, QLabel#voiceName { font-size: 14px; font-weight: 600; }
+QLabel#pageNote, QLabel#settingNote, QLabel#voiceNote { color: $mute; font-size: 13px; }
+QLabel#settingValue, QLabel#voiceValue { font-size: 14px; font-weight: 650; }
 QLabel#statNum { font-size: 20px; font-weight: 650; }
 QFrame#stat, QFrame#aside { background: rgba(255,255,255,0.035); border: none; border-radius: 14px; }
 QPushButton#nav { text-align: left; padding: 7px 12px; border: none; margin: 1px 12px; border-radius: 8px;
@@ -33,6 +37,14 @@ QPushButton#nav { text-align: left; padding: 7px 12px; border: none; margin: 1px
 QPushButton#nav:hover { background: rgba(255,255,255,0.05); color: $text; }
 QPushButton#nav:checked { color: #ffffff; font-weight: 600; background: rgba(255,255,255,0.08); }
 QFrame#card, QFrame#tile { background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.045); border-radius: 16px; }
+QListWidget { background: rgba(0,0,0,0.25); border: 1px solid rgba(255,255,255,0.08); border-radius: 10px; padding: 4px; outline: 0; }
+QListWidget::item { padding: 7px 10px; border-radius: 7px; }
+QListWidget::item:hover { background: rgba(255,255,255,0.06); }
+QListWidget::item:selected { background: $a1; color: #ffffff; }
+QFrame#infoBox { background: rgba(255,255,255,0.035); border: 1px solid rgba(255,255,255,0.05); border-left: 3px solid $a1; border-radius: 10px; }
+QLabel#stepNum { background: $a1; color: #ffffff; border-radius: 13px; font-weight: 700; font-size: 12px; }
+QPushButton#danger { background: rgba(244,63,94,0.14); border: 1px solid rgba(244,63,94,0.45); color: #ffd3da; }
+QPushButton#danger:hover { background: rgba(244,63,94,0.24); }
 QLabel#pill, QLabel#pillOn, QLabel#pillWait, QLabel#pillBad { border-radius: 9px; padding: 3px 8px; font-size: 11px; font-weight: 600; }
 QLabel#pill { background: rgba(255,255,255,0.06); color: $mute; }
 QLabel#pillOn { background: rgba(52,211,153,0.16); color: #b7f7dc; }

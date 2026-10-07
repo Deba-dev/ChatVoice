@@ -41,6 +41,10 @@ class Cloud(BaseHTTPRequestHandler):
                                           "hookUrl": "https://cv.example/hook/razorpay/abc", "hookUrls": {g: "https://cv.example/hook/%s/abc" % g for g in ("razorpay", "stripe", "cashfree", "generic")}}})
     def do_POST(self):
         b = self.body()
+        if self.path == "/api/discord/setup":
+            C["setup_calls"] = C.get("setup_calls", 0) + 1
+            nice = {"youtube": "YouTube", "twitch": "Twitch", "kick": "Kick"}
+            return self.send({"ok": True, "sources": [{"source": s_, "label": nice[s_], "roleId": "9000%d" % i, "roleName": nice[s_] + " Viewer", "roleCreated": True, "invite": "https://discord.gg/NEW%s" % nice[s_][:2], "reused": False} for i, s_ in enumerate(b["sources"])]})
         if self.path == "/api/invites/check":
             return self.send({"rules": [{"label": "YouTube", "code": "yt1", "found": True, "uses": 4}, {"label": "Twitch", "code": "tw1", "found": False, "uses": None}], "assigned": [{}], "notes": ["Now watching your invites."]})
         if self.path == "/api/grant":
@@ -49,42 +53,35 @@ class Cloud(BaseHTTPRequestHandler):
             return self.send({"ok": True, "role": b["role"], "status": 204})
         self.send({"error": "nf"}, 404)
 
-# ---------------- fake Google ----------------
-G = {"msgs": [], "deleted": [], "bans": [], "tokens": 0, "refreshes": 0, "delete_status": 204, "auth_params": None}
-class Google(BaseHTTPRequestHandler):
+# ---------------- fake ChatVoice YouTube bot (same API as youtube-bot/v1.mjs) ----------------
+G = {"typed": False, "moderate": [], "info": 0, "fail_token": False, "used": 0}
+class Bot(BaseHTTPRequestHandler):
     def log_message(self, *a): pass
     def send(self, o, code=200):
         b = json.dumps(o).encode(); self.send_response(code); self.send_header("content-type", "application/json"); self.end_headers(); self.wfile.write(b)
-    def do_POST(self):
-        n = int(self.headers.get("content-length") or 0); raw = self.rfile.read(n)
-        u = urllib.parse.urlparse(self.path)
-        if u.path == "/token":
-            f = urllib.parse.parse_qs(raw.decode())
-            if f["grant_type"][0] == "authorization_code":
-                assert f["code_verifier"][0] and f["client_secret"][0] == "SECRET"; G["tokens"] += 1
-                return self.send({"access_token": "AT1", "expires_in": 3600, "refresh_token": "RT1"})
-            G["refreshes"] += 1; return self.send({"access_token": "AT2", "expires_in": 3600})
-        if u.path == "/youtube/v3/liveChat/bans":
-            assert self.headers["Authorization"].startswith("Bearer AT"); G["bans"].append(json.loads(raw)); return self.send({"id": "ban1"})
-        self.send({}, 404)
+    def body(self):
+        n = int(self.headers.get("content-length") or 0); return json.loads(self.rfile.read(n) or b"{}")
     def do_GET(self):
-        u = urllib.parse.urlparse(self.path); q = urllib.parse.parse_qs(u.query)
-        if not self.headers.get("Authorization", "").startswith("Bearer AT"): return self.send({"error": {"message": "unauthorized"}}, 401)
-        if u.path == "/youtube/v3/videos": return self.send({"items": [{"liveStreamingDetails": {"activeLiveChatId": "CHAT1"}}]})
-        if u.path == "/youtube/v3/liveChat/messages":
-            start = int(q.get("pageToken", ["0"])[0])
-            items = [{"id": m["id"], "snippet": {"displayMessage": m["text"]}, "authorDetails": {"channelId": m["ch"]}} for m in G["msgs"][start:]]
-            return self.send({"items": items, "nextPageToken": str(len(G["msgs"]))})
-        self.send({}, 404)
-    def do_DELETE(self):
-        u = urllib.parse.urlparse(self.path); mid = urllib.parse.parse_qs(u.query)["id"][0]
-        if G["delete_status"] != 204: return self.send({"error": {"message": "forbidden"}}, G["delete_status"])
-        G["deleted"].append(mid); self.send_response(204); self.end_headers()
-for H, port in ((Cloud, 8811), (Google, 8812)):
+        if self.path == "/v1/info": G["info"] += 1; return self.send({"ok": True, "authorized": True, "bot": {"title": "Chat Voice", "handle": "@ChatVoice-V1"}})
+        self.send({"error": "nf"}, 404)
+    def do_POST(self):
+        b = self.body()
+        if self.path == "/v1/verify/start":
+            if b.get("videoId") == "notlive0001": return self.send({"ok": False, "error": "That video is not live right now."}, 409)
+            return self.send({"ok": True, "code": "CV-ABC234", "channelId": "UC" + "a" * 22, "channelTitle": "Test Streamer", "expiresIn": 900})
+        if self.path == "/v1/verify/check":
+            return self.send({"ok": True, "token": "TOKEN123", "channelId": "UC" + "a" * 22, "channelTitle": "Test Streamer"}) if G["typed"] else self.send({"ok": False, "waiting": True})
+        if self.path == "/v1/moderate":
+            if G["fail_token"] or self.headers.get("Authorization") != "Bearer TOKEN123": return self.send({"ok": False, "error": "expired"}, 401)
+            G["moderate"].append(b); G["used"] += len(b["items"])
+            notes = ["%s: %s" % ("TEST MODE" if b["dryRun"] else "Deleted", it["author"]) for it in b["items"]]
+            return self.send({"ok": True, "notes": notes, "usedToday": G["used"], "limit": b["limit"]})
+        self.send({"error": "nf"}, 404)
+
+for H, port in ((Cloud, 8811), (Bot, 8812)):
     s = ThreadingHTTPServer(("127.0.0.1", port), H); threading.Thread(target=s.serve_forever, daemon=True).start()
 
 import app.ytmod as ytmod
-ytmod.AUTH_URL = "http://127.0.0.1:8812/auth"; ytmod.TOKEN_URL = "http://127.0.0.1:8812/token"; ytmod.API = "http://127.0.0.1:8812/youtube/v3"
 from app.ui import MainWindow
 from app.models import Message
 w = MainWindow(); w.show()
@@ -136,41 +133,52 @@ w.payments.secret.setText("whsec_123"); w.payments.save_secret(); wait(500)
 ok(C["config_puts"][-1] == {"razorpaySecret": "whsec_123"} and w.payments.hook.text().endswith("/hook/razorpay/abc"), "secret saved on its own (roles untouched), webhook address shown")
 w.payments.test_tip(); wait(300); ok(spoken[-1][0] == "Rahul" and spoken[-1][2] == "₹100", "test payment button works")
 
-# ===== C. YouTube moderation =====
-print("--- C. YouTube moderation ---")
-w.s.set("g_client_id", "CID"); w.s.set("g_client_secret", "SECRET"); w.s.set("youtube", "https://www.youtube.com/watch?v=7NlbmyxncOk")
-ytmod_url = w.gauth.begin_login(w.bridge)
-q = urllib.parse.parse_qs(urllib.parse.urlparse(ytmod_url).query)
-ok(q["code_challenge_method"] == ["S256"] and q["scope"] == [ytmod.SCOPE] and q["access_type"] == ["offline"], "sign-in uses PKCE, the right permission, offline access")
-redirect = q["redirect_uri"][0]
-urllib.request.urlopen(redirect + "/?code=bogus&state=WRONG").read(); wait(200)
-ok(not w.gauth.logged_in, "answer with a wrong state value is rejected")
-urllib.request.urlopen(redirect + "/?code=abc&state=" + q["state"][0]).read(); wait(800)
-ok(w.gauth.logged_in and G["tokens"] == 1, "sign-in completes and the token is saved")
-w.gauth.tok["expires_at"] = 0; w.gauth.access_token(); ok(G["refreshes"] == 1, "expired token is refreshed automatically")
+# ===== C. YouTube moderation through the hosted bot =====
+print("--- C. YouTube moderation (bot) ---")
+UCA, UCB, UCM = "UC" + "a" * 22, "UC" + "b" * 22, "UC" + "m" * 22
+w.s.set("yt_bot_url", "http://127.0.0.1:8812"); w.s.set("youtube", "https://www.youtube.com/watch?v=7NlbmyxncOk")
+from app.settings import Settings as _Settings
+_fresh = os.path.join(os.environ["APPDATA"], "fresh_settings.json"); open(_fresh, "w").write('{"cloud_url": "", "yt_bot_url": "   "}')
+_fs = _Settings(_fresh)
+ok(_fs.get("cloud_url").startswith("https://") and "workers.dev" in _fs.get("cloud_url") and _fs.get("yt_bot_url").startswith("https://"), "the cloud and bot addresses are built in (even if an old settings file saved them empty): streamers never type them")
+w.ytmod.refresh_info(); wait(600)
+ok(w.ytmod.bot_state == "online" and w.s.get("yt_bot_handle") == "@ChatVoice-V1" and "Bot online" in w.ytpage.bot_badge.text(), "page shows the bot online with its name")
+ok("@ChatVoice-V1" in w.ytpage.step2.body.text() and w.ytpage.handle.text() == "@ChatVoice-V1", "instructions name the bot to add as moderator")
+w.s.set("youtube", ""); w.ytpage.verify(); wait(200)
+ok("Connect page" in w.ytmod.message and not w.ytmod.code, "verifying without a live link tells the streamer what to do first")
+w.s.set("youtube", "https://www.youtube.com/watch?v=7NlbmyxncOk"); w.ytpage.verify(); wait(600)
+ok(w.ytmod.code == "CV-ABC234" and w.ytpage.code_box.isVisibleTo(w.ytpage) and w.ytpage.code_label.text() == "CV-ABC234", "a code is shown to type in the live chat")
+w.ytmod.check_verify(); wait(500); ok(not w.ytmod.verified, "still waiting until the code is typed")
+G["typed"] = True; w.ytpage._poll_code(); wait(600)
+ok(w.ytmod.verified and w.s.get("yt_channel_title") == "Test Streamer" and "Verified" in w.ytpage.v_badge.text() and not w.ytpage.code_box.isVisibleTo(w.ytpage), "channel verified, page shows the channel name")
 w.ytmod.timer.setInterval(100)
-def post(author, ch, text, **kw):
-    G["msgs"].append({"id": "M%d" % (len(G["msgs"]) + 1), "ch": ch, "text": text}); w.on_message(Message("youtube", author, text, uid=ch, **kw))
-post("Spammer", "UC9", "visit www.spam.com now"); wait(900)
-ok(not G["deleted"] and "TEST MODE: would delete Spammer" in w.feed.toPlainText(), "TEST MODE only reports what would be deleted")
-w.s.set("mod_dry_run", False)
-post("Spammer", "UC9", "check www.other.com"); wait(900)
-ok(G["deleted"] == ["M2"], "real mode: the right message was deleted (matched by viewer + text)")
-post("Spammer", "UC9", "third www.again.com"); wait(900)
-ok(G["deleted"] == ["M2", "M3"] and len(G["bans"]) == 1, "3rd deletion in 10 minutes -> viewer timed out")
-b = G["bans"][0]["snippet"]; ok(b["type"] == "temporary" and b["banDurationSeconds"] == 300 and b["bannedUserInfo"]["channelId"] == "UC9" and b["liveChatId"] == "CHAT1", "time-out request is correct (5 minutes)")
-post("Mod", "UC5", "mod posts www.link.com", mod=True); wait(700)
-ok(len(G["deleted"]) == 2, "moderators are never touched")
-post("Fan", "UC6", "I love badword"); wait(900)
-ok(G["deleted"][-1] == "M5", "blocked word message deleted")
-w.s.set("mod_budget", w.ytmod.used_today())
-post("Spammer2", "UC8", "x www.limit.com"); wait(900)
-ok("Daily moderation limit reached" in w.feed.toPlainText() and len(G["deleted"]) == 3, "daily action limit stops further deletions")
-w.s.set("mod_budget", 60); G["delete_status"] = 403
-post("Spammer3", "UC7", "y www.nope.com"); wait(900)
-ok("must be the channel owner or a moderator" in w.feed.toPlainText(), "403 explains that the account needs moderator rights")
-w.s.set("mod_del_links", False); n = len(G["msgs"]); post("Quiet", "UC4", "z www.allowed.com"); wait(500)
-ok(True, "rule switched off: nothing flagged (no crash)")
+def post(author, ch, text, **kw): w.on_message(Message("youtube", author, text, uid=ch, **kw))
+post("Spammer", UCA, "visit www.spam.com now"); wait(700)
+req = G["moderate"][-1]
+ok(req["dryRun"] is True and req["videoId"] == "7NlbmyxncOk" and req["items"] == [{"channelId": UCA, "author": "Spammer", "text": "visit www.spam.com now", "reason": "link", "action": "delete"}], "test mode: the bot is asked what it WOULD remove")
+ok("TEST MODE: Spammer" in w.feed.toPlainText() and w.s.get("yt_used") == 1, "the bot's answer appears in the feed and the daily counter updates")
+ok("Active \u2014 test mode" in w.ytpage.status.text(), "status badge says test mode")
+w.s.set("mod_dry_run", False); n = len(G["moderate"])
+post("Spammer", UCA, "second www.two.com"); wait(700)
+ok(G["moderate"][-1]["dryRun"] is False and len(G["moderate"]) == n + 1, "after switching test mode off the request is real")
+post("Spammer", UCA, "third www.three.com"); wait(700)
+items = G["moderate"][-1]["items"]
+ok(items[-1] == {"action": "timeout", "channelId": UCA, "author": "Spammer", "seconds": 300}, "3rd removal in 10 minutes also asks for a 5-minute time-out")
+n = len(G["moderate"])
+post("Mod", UCM, "mod posts www.link.com", mod=True); post("Odd", "not-a-channel-id", "x www.y.com"); wait(500)
+ok(len(G["moderate"]) == n, "moderators and unknown viewer ids are never sent to the bot")
+w.s.set("mod_del_links", False); post("Quiet", UCB, "z www.allowed.com"); wait(500); ok(len(G["moderate"]) == n, "a rule that is switched off sends nothing")
+w.s.set("mod_del_links", True); w.s.set("yt_mod_on", False); post("Quiet", UCB, "z www.allowed.com"); wait(500); ok(len(G["moderate"]) == n, "master switch off sends nothing")
+w.s.set("yt_mod_on", True); post("Fan", UCB, "I love badword"); wait(700); ok(len(G["moderate"]) == n + 1 and G["moderate"][-1]["items"][0]["reason"] == "blocked word", "blocked words are sent too")
+G["fail_token"] = True; post("Late", UCB, "late www.late.com"); wait(700)
+ok(not w.ytmod.verified and "verification expired" in w.feed.toPlainText(), "an expired verification is cleared and the streamer is told to verify again")
+G["fail_token"] = False
+w.on_status("youtube", "Connected", True); ok(not w.yt_beat.isActive(), "no wake-up pings until the channel is verified")
+w.s.set("yt_bot_token", "TOKEN123"); w.on_status("youtube", "Connected", True); ok(w.yt_beat.isActive(), "while connected to YouTube the app keeps the free-hosted bot awake")
+w.on_status("youtube", "Disconnected", False); ok(not w.yt_beat.isActive(), "pings stop when you disconnect")
+w.s.set("yt_bot_url", "http://127.0.0.1:9"); post("Net", UCB, "net www.down.com"); wait(1200)
+ok("Cannot reach the ChatVoice bot" in w.feed.toPlainText(), "if the bot cannot be reached the streamer sees a plain message")
+w.s.set("yt_bot_url", "http://127.0.0.1:8812")
 w.goto(5); wait(300); w.grab().save(os.path.join(os.environ["APPDATA"], "payments.png")); w.goto(6); wait(300); w.grab().save(os.path.join(os.environ["APPDATA"], "ytmod.png"))
 
 # ===== D. invite roles UI, themes, lite mode, animations =====
@@ -232,7 +240,7 @@ w.apply_theme("Neon Violet")
 print("--- F. updates ---")
 import hashlib, app.updater as upd
 from app.version import VERSION
-ok(upd.parse_version("v0.10.0") > upd.parse_version("0.9.9") and upd.parse_version("v1") == (1, 0, 0) and upd.parse_version("0.4.0") == upd.parse_version(VERSION), "version numbers compare correctly (0.10 is newer than 0.9)")
+ok(upd.parse_version("v0.10.0") > upd.parse_version("0.9.9") and upd.parse_version("v1") == (1, 0, 0) and upd.parse_version("v" + VERSION) == upd.parse_version(VERSION), "version numbers compare correctly (0.10 is newer than 0.9)")
 BLOB = b"MZ-fake-installer-bytes" * 5000
 GH = {"tag": "v9.9.9", "digest": "sha256:" + hashlib.sha256(BLOB).hexdigest(), "asset": "http://127.0.0.1:8813/dl/ChatVoice-Setup.exe"}
 class Gh(BaseHTTPRequestHandler):
@@ -296,5 +304,81 @@ ok(label() == "Phase %d \u00b7 v%s (BETA)" % (PHASE, VERSION) and STAGE == "BETA
 ok(label() in texts and any("itsmeblitz" in x for x in texts), "sidebar shows the version label and 'by itsmeblitz'")
 ok("itsmeblitz" in w.windowTitle() and "BETA" in w.windowTitle(), "window title: %s" % w.windowTitle())
 ok(b"itsmeblitz" in urllib.request.urlopen("http://127.0.0.1:%d/" % w.overlay.port).read() if w.overlay.server else True, "overlay start page carries the credit")
+
+# ===== J. simple Discord setup =====
+print("--- J. one-click Discord ---")
+import urllib.parse as _up, app.discord_page as _dp
+d = w.discord; opened = []
+_dp.QDesktopServices.openUrl = lambda u: opened.append(u.toString())
+w.s.set("cloud_token", ""); w.s.set("guild_name", ""); d.refresh_state()
+ok("Not connected" in d.badge.text() and not d.roles_card.isEnabled() and d.connect_btn.objectName() == "primary", "before connecting: one big button, the roles card is greyed out")
+w.s.set("cloud_url", "http://127.0.0.1:8811"); d.connect()
+ok(opened and opened[0].startswith("http://127.0.0.1:8811/setup?return=http%3A%2F%2F127.0.0.1%3A") and "Waiting for Discord" in d.badge.text(), "the button opens the browser on the bot-adding page with a return address on this PC")
+back = _up.unquote(opened[0].split("return=")[1])
+urllib.request.urlopen(back + "?ok=0&error=access_denied").read(); wait(600)
+ok("not connected" in d.status.text().lower() and "access_denied" in d.status.text() and not w.s.get("cloud_token"), "pressing Cancel on Discord leaves nothing changed and says so")
+opened.clear(); d.connect(); back = _up.unquote(opened[0].split("return=")[1])
+urllib.request.urlopen(back + "?ok=1&token=KEY&guild=My+Server&gid=G1").read(); wait(1200)
+ok(w.s.get("cloud_token") == "KEY" and "Connected" in d.badge.text() and d.status.text() == "Srv" and d.roles_card.isEnabled(), "after Authorize the app is connected by itself (no key pasted)")
+ok(d.connect_btn.text() == "Connect a different server" and d.connect_btn.objectName() == "quiet", "button turns into a quiet 'connect a different server'")
+d.src_switch["kick"].setChecked(False); d.setup_roles(); wait(900)
+ok(C["setup_calls"] == 1 and d.src_link["youtube"].text() == "https://discord.gg/NEWYo" and d.src_link["twitch"].text().startswith("https://discord.gg/NEW") and d.src_link["kick"].text() == "", "one click fills an invite link for each ticked platform only")
+ok("YouTube Viewer" in d.src_role["youtube"].text() and "2 invite link" in d.istatus.text() and d.setup_btn.isEnabled() and d.tip.isVisibleTo(d), "role names and next-step advice are shown")
+ok(w.s.get("inv_youtube") == "https://discord.gg/NEWYo" and d.inv_edits["youtube"].text() == "https://discord.gg/NEWYo", "advanced fields stay in step with the simple ones")
+d.src_switch["youtube"].setChecked(False); d.src_switch["twitch"].setChecked(False); d.src_switch["kick"].setChecked(False); d.setup_roles()
+ok("at least one platform" in d.istatus.text() and C["setup_calls"] == 1, "nothing ticked: a clear message, no request")
+ok(not d.adv.isVisibleTo(d) and d.adv_btn.text() == "Show advanced options", "manual options are hidden until asked for"); d.adv_btn.setChecked(True); ok(d.adv.isVisibleTo(d), "Advanced options opens the old manual controls")
+w.s.set("cloud_token", "STALE"); d.key.setText("STALE"); d.test(); wait(600)
+ok(not w.s.get("cloud_token") and "no longer valid" in d.status.text() and "Not connected" in d.badge.text(), "a key that stopped working is dropped with a plain explanation")
+w.s.set("cloud_token", "KEY"); d.refresh_state()
+
+# ===== K. music =====
+print("--- K. music ---")
+import tempfile, shutil
+from PySide6.QtCore import QObject, Signal
+from app.music import MusicPlayer, describe, scan
+class FakeBackend(QObject):
+    ended = Signal(); failed = Signal(str)
+    def __init__(self): super().__init__(); self.vol = None; self.loaded = []; self.playing = False
+    def load(self, p): self.loaded.append(os.path.basename(p))
+    def play(self): self.playing = True
+    def pause(self): self.playing = False
+    def stop(self): self.playing = False
+    def set_volume(self, v): self.vol = round(v, 3)
+folder = tempfile.mkdtemp(); [open(os.path.join(folder, n), "wb").write(b"x") for n in ("Aria - First_Song.mp3", "Bo - Second.ogg", "third.wav", "readme.txt", "cover.jpg")]
+os.makedirs(os.path.join(folder, "sub", "deep", "deeper")); open(os.path.join(folder, "sub", "deep", "deeper", "toodeep.mp3"), "wb").write(b"x")
+ok(describe("/m/Aria - First_Song.mp3") == ("Aria", "First Song") and describe("/m/third.wav") == ("", "third"), "file names become artist and title")
+ok([x["title"] for x in scan(folder)] == ["First Song", "Second", "third"], "only audio files are found, and not folders more than two levels deep")
+pushed = []; fb = FakeBackend(); s2 = _Settings(os.path.join(os.environ["APPDATA"], "music_settings.json")); s2.set("music_shuffle", False); s2.set("music_volume", 50)
+mp = MusicPlayer(s2, lambda k, d_: pushed.append((k, d_)), backend=fb); notes = []; mp.notice.connect(notes.append)
+ok(mp.load_folder(folder) == 3 and fb.vol == 0.5, "folder loaded, volume applied")
+mp.toggle(); ok(fb.loaded == ["Aria - First_Song.mp3"] and fb.playing and pushed[-1] == ("music", {"title": "First Song", "artist": "Aria", "playing": True}), "play starts the first song and tells the overlay")
+fb.ended.emit(); ok(fb.loaded[-1] == "Bo - Second.ogg", "when a song ends the next one starts")
+mp.prev(); ok(fb.loaded[-1] == "Aria - First_Song.mp3", "previous goes back")
+mp.toggle(); ok(not fb.playing and pushed[-1][1]["playing"] is False, "pause stops the sound and clears the overlay")
+mp.toggle(); mp.duck(True); ok(fb.vol == 0.15, "music drops to 30% of its volume while the voice speaks (50% -> 15%)")
+mp.duck(False); ok(fb.vol == 0.5, "and comes back afterwards")
+s2.set("music_duck", False); mp.duck(True); ok(fb.vol == 0.5, "ducking can be switched off"); mp.duck(False); s2.set("music_duck", True)
+mp.set_volume(80); ok(fb.vol == 0.8 and s2.get("music_volume") == 80, "volume slider changes the level and is remembered")
+fb.failed.emit("bad codec"); ok("Skipped a file" in notes[-1] and fb.playing, "an unplayable file is skipped, music keeps going")
+for _ in range(2): fb.failed.emit("bad codec")     # 3 files, 3 failures in a row
+ok("None of the music files" in notes[-1] and not mp.playing, "if nothing can be played it stops and says why (no endless loop)")
+s2.set("music_shuffle", True); mp.load_folder(folder); order = []
+for _ in range(3): mp.next(); order.append(mp.index)
+ok(sorted(order) == [0, 1, 2], "shuffle plays every song once before repeating")
+# inside the real window
+w.music.backend = FakeBackend(); w.music.backend.ended.connect(w.music.next); w.music.set_volume(60)
+w.music.load_folder(folder); wait(200); w.goto(8); wait(300)
+ok(w.musicpage.list.count() == 3 and "3 songs" in w.musicpage.count.text() and not w.musicpage.empty.isVisibleTo(w.musicpage), "music page lists the songs")
+w.musicpage.list.setCurrentRow(1); w.music.play_index(1); wait(100)
+ok("Playing" in w.musicpage.state.text() and w.musicpage.title.text() == "Second" and "Pause" in w.musicpage.play_btn.text(), "now-playing panel follows the player")
+w.speaker.busy_changed.emit(True); ok(w.music.backend.vol == round(0.6 * 0.3, 3), "music really gets quieter when ChatVoice starts speaking")
+w.speaker.busy_changed.emit(False); ok(w.music.backend.vol == 0.6, "and returns when it stops")
+st = ov("/poll?type=music&after=-1")
+ok(st["state"] == {"title": "Second", "artist": "Bo", "playing": True}, "the OBS now-playing overlay is given the current song")
+ok(b'data-mode="music"' in urllib.request.urlopen(w.overlay.url("music")).read() and w.musicpage.music_url.text().endswith("/music"), "now-playing overlay page exists and its address is on the Music page")
+w.music.stop(); ok(ov("/poll?type=music&after=-1")["state"]["playing"] is False, "stopping hides it on stream")
+w.goto(8); wait(300); w.grab().save(os.path.join(os.environ["APPDATA"], "music.png")); shutil.rmtree(folder, ignore_errors=True)
+ok(len([b for b in w.findChildren(__import__("PySide6.QtWidgets", fromlist=["QPushButton"]).QPushButton) if b.objectName() == "nav"]) == 9 and w.nav.button(8).text().strip() == "Music" and not w.nav.button(8).icon().isNull(), "sidebar has all 9 pages, each with a drawn icon (Music included)")
 print("\nALL PASSED" if not fails else "\n%d FAILED" % fails)
 w.close()

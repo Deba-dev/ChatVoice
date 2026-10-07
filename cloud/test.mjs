@@ -6,6 +6,8 @@ const KV = { async get(k) { return store.has(k) ? store.get(k) : null; }, async 
 const env = { KV, DISCORD_CLIENT_ID: "CID", DISCORD_CLIENT_SECRET: "SEC", DISCORD_BOT_TOKEN: "BOT" };
 const puts = [];
 let memberOk = true, roleStatus = 204;
+const baseRoles = () => [{ id: "1", name: "@everyone", position: 0 }, { id: "100001", name: "Verified", position: 3 }, { id: "100002", name: "Regular", position: 2 }, { id: "100003", name: "Supporter", position: 4 }, { id: "9", name: "BotRole", managed: true, position: 5 }];
+let rolesNow = baseRoles(), roleCreateStatus = 200, systemChannel = "C1", inviteSeq = 0; const createdRoles = [], createdInvites = [];
 let invitesNow = [], membersNow = [], invitesStatus = 200, membersStatus = 200, memberCalls = 0;
 const putsFull = [];
 
@@ -19,7 +21,11 @@ globalThis.fetch = async (url, init = {}) => {
   }
   if (p === "/users/@me") return j({ id: "U1", username: "rahul", global_name: "Rahul" });
   if (p === "/guilds/G1/members/U1" && m === "GET") return memberOk ? j({ user: { id: "U1" } }) : j({}, 404);
-  if (p === "/guilds/G1/roles") return j([{ id: "1", name: "@everyone", position: 0 }, { id: "100001", name: "Verified", position: 3 }, { id: "100002", name: "Regular", position: 2 }, { id: "100003", name: "Supporter", position: 4 }, { id: "9", name: "BotRole", managed: true, position: 5 }]);
+  if (p === "/guilds/G1/roles" && m === "GET") return j(rolesNow);
+  if (p === "/guilds/G1/roles" && m === "POST") { if (roleCreateStatus !== 200) return j({}, roleCreateStatus); const r = { id: String(900000 + rolesNow.length), name: JSON.parse(init.body).name }; rolesNow.push(r); createdRoles.push(r.name); return j(r); }
+  if (p === "/guilds/G1" && m === "GET") return j(systemChannel ? { system_channel_id: systemChannel } : {});
+  if (p === "/guilds/G1/channels") return j([{ id: "C9", type: 2, position: 0 }, { id: "C2", type: 0, position: 1, name: "general" }]);
+  if (/^\/channels\/\w+\/invites$/.test(p) && m === "POST") { const code = "NEW" + (++inviteSeq); invitesNow.push({ code, uses: 0 }); createdInvites.push(p.split("/")[2]); return j({ code }); }
   if (m === "PUT" && /^\/guilds\/G1\/members\/\w+\/roles\/\w+$/.test(p)) { const [, , , , u, , r] = p.split("/"); puts.push(r); putsFull.push(u + ":" + r); return new Response(null, { status: roleStatus }); }
   if (p === "/guilds/G1/invites") return invitesStatus === 200 ? j(invitesNow) : j({}, invitesStatus);
   if (p === "/guilds/G1/members") { memberCalls++; return membersStatus === 200 ? j(membersNow) : j({}, membersStatus); }
@@ -33,7 +39,7 @@ const stateFrom = (res) => new URL(res.headers.get("location")).searchParams.get
 
 // 1. bot setup
 let r = await call("/setup");
-ok(r.status === 302 && r.headers.get("location").includes("permissions=268435488"), "setup redirects to Discord with Manage Roles");
+ok(r.status === 302 && r.headers.get("location").includes("permissions=268436513"), "setup redirects to Discord with Manage Roles");
 r = await call("/setup/callback?code=abc&state=" + stateFrom(r));
 let html = await r.text();
 const token = html.match(/<code>([a-z0-9]{40})<\/code>/)?.[1];
@@ -244,5 +250,40 @@ ok(by("cs_4").name === "Card Holder" && by("cs_4").display === "JPY 500", "Strip
 ok(by("order_1") === undefined && ev.events.some((e) => e.id === "555" && e.name === "Sam" && e.message === "Nice stream" && e.display === "₹100"), "Cashfree: name, note and ₹100 found");
 ok(by("g1").display === "₹75" && by("g2").display === "₹10.50" && by("g2").message === "secret in body", "Universal: amounts and messages read correctly");
 
+
+// 11. simple setup: the app is sent back by the browser, and one click makes roles + invite links
+const CBK = "http://127.0.0.1:5599/done";
+r = await call("/setup?return=" + encodeURIComponent("http://evil.example/steal")); ok(r.status === 400, "return address must be a program on this PC");
+r = await call("/setup?return=" + encodeURIComponent("http://127.0.0.1:5599/done")); ok(r.status === 302 && r.headers.get("location").includes("discord.com/oauth2/authorize"), "setup with a local return address goes to Discord");
+let st2 = stateFrom(r);
+r = await call("/setup/callback?code=abc&state=" + st2);
+const back = new URL(r.headers.get("location"));
+ok(r.status === 302 && back.origin + back.pathname === CBK && back.searchParams.get("ok") === "1" && back.searchParams.get("guild") === "Test Server", "after Authorize, the browser sends the key straight back to the app");
+const newKey = back.searchParams.get("token");
+r = await call("/api/config", { headers: { Authorization: "Bearer " + newKey } }); ok(r.status === 200, "the key delivered to the app works (no copy and paste)");
+H.Authorization = "Bearer " + newKey;
+r = await call("/setup?return=" + encodeURIComponent(CBK)); st2 = stateFrom(r);
+r = await call("/setup/callback?error=access_denied&state=" + st2); const cancelled = new URL(r.headers.get("location"));
+ok(cancelled.searchParams.get("ok") === "0" && cancelled.searchParams.get("error") === "access_denied", "pressing Cancel on Discord returns to the app with a clear result");
+
+rolesNow = baseRoles(); invitesNow = []; createdRoles.length = 0; createdInvites.length = 0; puts.length = 0;
+const setup = (b = {}) => call("/api/discord/setup", { method: "POST", headers: H, body: JSON.stringify(b) }).then(async (x) => ({ status: x.status, data: await x.json() }));
+let sr = await setup({ sources: ["youtube", "twitch"] });
+ok(sr.status === 200 && sr.data.sources.length === 2 && sr.data.sources[0].invite.startsWith("https://discord.gg/NEW"), "one click returns an invite link for each platform");
+ok(createdRoles.join() === "YouTube Viewer,Twitch Viewer" && sr.data.sources.every((x) => x.roleCreated), "the roles were created by the bot");
+ok(createdInvites.join() === "C1,C1", "invites were made in the server's welcome channel");
+r = await call("/api/config", { headers: H }); const cfgNow = (await r.json()).config;
+ok(cfgNow.inviteRules.length === 2 && cfgNow.inviteRules[0].label === "YouTube", "invite rules are saved automatically");
+sr = await setup({ sources: ["youtube", "twitch"] }); ok(sr.data.sources.every((x) => x.reused && !x.roleCreated) && createdInvites.length === 2, "running it again reuses the same invites (no duplicates)");
+sr = await setup({ sources: ["kick"] }); r = await call("/api/config", { headers: H });
+ok(sr.status === 200 && (await r.json()).config.inviteRules.length === 3, "adding another platform keeps the others");
+rolesNow = baseRoles(); rolesNow.push({ id: "555555", name: "Kick Viewer" }); invitesNow = []; createdRoles.length = 0;
+sr = await setup({ sources: ["kick"] }); ok(sr.data.sources[0].roleId === "555555" && !sr.data.sources[0].roleCreated, "an existing role with the same name is reused");
+systemChannel = ""; createdInvites.length = 0; invitesNow = [];
+sr = await setup({ sources: ["youtube"] }); ok(sr.status === 200 && createdInvites[0] === "C2" && sr.data.channelName === "general", "no welcome channel -> the first text channel is used");
+roleCreateStatus = 403; rolesNow = baseRoles(); invitesNow = [];
+sr = await setup({ sources: ["twitch"] }); ok(sr.status === 403 && sr.data.error.includes("Manage Roles"), "missing permission -> plain instruction");
+roleCreateStatus = 200; systemChannel = "C1";
+sr = await setup({ sources: ["myspace"] }); ok(sr.status === 400, "unknown platform rejected");
 console.log(fails ? `\n${fails} FAILED` : "\nALL PASSED");
 process.exit(fails ? 1 : 0);

@@ -97,6 +97,70 @@ function parseRazorpay(pay) {
   return { id: String(pay.id), name: clean(name, 40) || "Someone", message: clean(message, 300), value, currency, display: displayAmount(value, currency) };
 }
 
+const SOURCES = {
+  youtube: { label: "YouTube", role: "YouTube Viewer", color: 0xff4d4d },
+  twitch: { label: "Twitch", role: "Twitch Viewer", color: 0x9146ff },
+  kick: { label: "Kick", role: "Kick Viewer", color: 0x53fc18 },
+};
+
+// Creates (or reuses) a role and a never-expiring invite for each platform, and saves the invite->role rules.
+async function discordSetup(env, guildId, guild, body) {
+  const wanted = (Array.isArray(body.sources) && body.sources.length ? body.sources : Object.keys(SOURCES)).filter((x) => SOURCES[x]);
+  if (!wanted.length) return { status: 400, data: { error: "Choose at least one platform." } };
+  const rr = await bot(env, "GET", `/guilds/${guildId}/roles`);
+  if (!rr.ok) return { status: 502, data: { error: "The bot cannot read the server's roles. Add it to your server again." } };
+  const roles = await rr.json();
+
+  let channelId = /^\d{5,25}$/.test(String(body.channelId || "")) ? String(body.channelId) : "";
+  let channelName = "";
+  if (!channelId) {
+    const gr = await bot(env, "GET", `/guilds/${guildId}`);
+    const g = gr.ok ? await gr.json() : {};
+    channelId = g.system_channel_id || "";
+    if (!channelId) {
+      const cr = await bot(env, "GET", `/guilds/${guildId}/channels`);
+      const first = cr.ok ? (await cr.json()).filter((c) => c.type === 0).sort((a, b) => a.position - b.position)[0] : null;
+      channelId = first ? first.id : "";
+      channelName = first ? first.name : "";
+    }
+  }
+  if (!channelId) return { status: 409, data: { error: "The server has no text channel the bot can see. Make one, then try again." } };
+
+  const il = await bot(env, "GET", `/guilds/${guildId}/invites`);
+  const liveInvites = new Set(il.ok ? (await il.json()).map((i) => i.code) : []);
+  const previous = (guild.config && guild.config.inviteRules) || [];
+  const out = [], rules = [];
+  for (const src of wanted) {
+    const meta = SOURCES[src];
+    let role = roles.find((r) => r.name === meta.role);
+    let created = false;
+    if (!role) {
+      const cr = await bot(env, "POST", `/guilds/${guildId}/roles`, { name: meta.role, color: meta.color, mentionable: false, hoist: false, permissions: "0" });
+      if (cr.status === 403) return { status: 403, data: { error: "The bot is missing the Manage Roles permission. Add it to your server again from the app." } };
+      if (!cr.ok) return { status: 502, data: { error: "Discord would not create the " + meta.role + " role (error " + cr.status + ")." } };
+      role = await cr.json();
+      roles.push(role);
+      created = true;
+    }
+    const keep = previous.find((r) => r.label === meta.label && r.role === role.id && liveInvites.has(r.code));
+    let code = keep ? keep.code : "";
+    if (!code) {
+      const ir = await bot(env, "POST", `/channels/${channelId}/invites`, { max_age: 0, max_uses: 0, unique: true });
+      if (!ir.ok) return { status: ir.status === 403 ? 403 : 502, data: { error: ir.status === 403 ? "The bot cannot create invites in that channel. Add it to your server again from the app." : "Discord would not create an invite (error " + ir.status + ")." } };
+      code = (await ir.json()).code;
+    }
+    rules.push({ code, role: String(role.id), label: meta.label });
+    out.push({ source: src, label: meta.label, roleId: String(role.id), roleName: role.name, roleCreated: created, invite: "https://discord.gg/" + code, reused: !!keep });
+  }
+  const others = previous.filter((r) => !wanted.some((w) => SOURCES[w].label === r.label));
+  guild.config = { ...(guild.config || {}), inviteRules: [...others, ...rules].slice(0, 6) };
+  await kvPut(env, "guild:" + guildId, guild);
+  cache.set("g:" + guildId, { exp: Date.now() + 30000, val: guild });
+  const idx = (await kvGet(env, "idx:invites")) || [];
+  if (!idx.includes(guildId)) await kvPut(env, "idx:invites", [...idx, guildId]);
+  return { status: 200, data: { ok: true, sources: out, channelId, channelName } };
+}
+
 function inviteCode(v) {
   v = String(v || "").trim();
   const m = v.match(/^(?:https?:\/\/)?(?:www\.)?(?:discord\.gg|discord(?:app)?\.com\/invite)\/([A-Za-z0-9-]{2,32})\/?$/i);
@@ -312,31 +376,46 @@ function health(env) {
     note: "looks_right only checks the shape of the value, never shows it",
   });
 }
-async function setupStart(env, origin) {
+const LOOPBACK = /^http:\/\/(?:127\.0\.0\.1|localhost):\d{2,5}(?:\/[\w\-./]*)?$/;
+
+async function setupStart(env, origin, returnUrl) {
+  if (returnUrl && !LOOPBACK.test(returnUrl)) return page("Cannot continue", "<p>The return address must be a program on this same PC.</p>", 400);
   const state = randomString(24, "abcdef0123456789");
-  await kvPut(env, "state:" + state, { kind: "setup" }, 600);
+  await kvPut(env, "state:" + state, { kind: "setup", ret: returnUrl || "" }, 600);
   return Response.redirect(
-    authorizeUrl(env, origin + "/setup/callback", "bot identify", state, { permissions: "268435488" }), 302);
+    authorizeUrl(env, origin + "/setup/callback", "bot identify", state, { permissions: "268436513" }), 302);
 }
+
+const backToApp = (ret, params) => Response.redirect(ret + (ret.includes("?") ? "&" : "?") + new URLSearchParams(params), 302);
 
 async function setupCallback(env, origin, url) {
   const state = url.searchParams.get("state"), code = url.searchParams.get("code");
   const st = state && (await kvGet(env, "state:" + state));
-  if (!st || st.kind !== "setup" || !code) return page("Link expired", "<p>Start again from the app's Discord page.</p>", 400);
+  if (!st || st.kind !== "setup") return page("Link expired", "<p>Start again from the app's Discord page.</p>", 400);
   await env.KV.delete("state:" + state);
+  if (!code) {                                                           // the person pressed Cancel on Discord's screen
+    return st.ret ? backToApp(st.ret, { ok: "0", error: url.searchParams.get("error") || "cancelled" })
+                  : page("Cancelled", "<p>The bot was not added.</p>", 400);
+  }
   let tok;
   try { tok = await exchange(env, code, origin + "/setup/callback"); }
-  catch (e) { return loginProblem(e); }
-  if (!tok.guild) return page("No server selected", "<p>Pick a server on the Discord screen and try again.</p>", 400);
+  catch (e) { return st.ret ? backToApp(st.ret, { ok: "0", error: String(e.message).slice(0, 120) }) : loginProblem(e); }
+  if (!tok.guild) {
+    return st.ret ? backToApp(st.ret, { ok: "0", error: "No server was selected" })
+                  : page("No server selected", "<p>Pick a server on the Discord screen and try again.</p>", 400);
+  }
   const guildId = tok.guild.id;
   const old = await kvGet(env, "guild:" + guildId);
   if (old) await env.KV.delete("token:" + old.token);
   const token = newToken();
   await kvPut(env, "guild:" + guildId, { token, guildName: tok.guild.name, config: old ? old.config : {} });
   await kvPut(env, "token:" + token, guildId);
+  cache.delete("g:" + guildId);
+  if (old) cache.delete("t:" + old.token);
+  if (st.ret) return backToApp(st.ret, { ok: "1", token, guild: tok.guild.name, gid: guildId });      // the app receives the key by itself
   return page("Bot added to " + tok.guild.name,
     `<p>Copy this <b>server key</b> into ChatVoice (Discord page). Keep it private:</p><code>${esc(token)}</code>
-     <p>Important: in Discord, drag the <b>ChatVoice</b> role above the roles it should give out.</p>`);
+     <p>You can now close this page.</p>`);
 }
 
 async function linkStart(env, origin, guildId) {
@@ -483,6 +562,11 @@ async function api(request, env, url) {
     return json({ roles });
   }
 
+  if (route === "POST /api/discord/setup") {
+    const r = await discordSetup(env, guildId, guild, body);
+    return json(r.data, r.status);
+  }
+
   if (route === "POST /api/invites/check") return json(await checkInvites(env, guildId, guild));
 
   if (route === "GET /api/links") {
@@ -546,7 +630,7 @@ async function route(request, env, url) {
     const [, , gw, id] = p.split("/");
     if (GATEWAYS.includes(gw) && id) return paymentHook(request, env, gw, id);
   }
-  if (p === "/setup") return setupStart(env, origin);
+  if (p === "/setup") return setupStart(env, origin, url.searchParams.get("return"));
   if (p === "/setup/callback") return setupCallback(env, origin, url);
   if (p === "/link/callback") return linkCallback(env, origin, url);
   if (p.startsWith("/link/")) return linkStart(env, origin, p.slice(6));

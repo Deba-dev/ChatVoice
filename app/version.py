@@ -1,5 +1,5 @@
-PHASE = 4
-VERSION = "0.4.0"       # the number the updater compares (keep it in step with installer.iss and version_info.txt)
+PHASE = 5
+VERSION = "0.5.0"       # the number the updater compares (keep it in step with installer.iss and version_info.txt)
 STAGE = "BETA"
 CREATOR = "itsmeblitz"
 

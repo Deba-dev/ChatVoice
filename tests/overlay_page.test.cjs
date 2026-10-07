@@ -2,14 +2,14 @@ const { JSDOM } = require("jsdom"); const fs = require("fs");
 let fails = 0; const ok = (c, m) => { console.log((c ? "PASS " : "FAIL ") + m); if (!c) fails++; };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 function make(file, cfg) {
-  const state = { latest: 5, events: [] };
+  const state = { latest: 5, events: [], music: null };
   const dom = new JSDOM(fs.readFileSync(file, "utf8"), { runScripts: "dangerously", pretendToBeVisual: true, beforeParse(w) {
     w.__POLL = 30; w.audioCalls = 0; w.AudioContext = function () { w.audioCalls++; throw new Error("no audio in test"); };
     w.fetch = (url) => { const after = Number(new URL(url, "http://x").searchParams.get("after"));
       const evs = after < 0 ? [] : state.events.filter((e) => e.id > after);
-      return Promise.resolve({ json: () => Promise.resolve({ events: evs, latest: state.latest, cfg }) }); };
+      return Promise.resolve({ json: () => Promise.resolve({ events: evs, latest: state.latest, cfg, state: state.music }) }); };
   } });
-  return { dom, push(e) { e.id = ++state.latest; state.events.push(e); } };
+  return { dom, push(e) { e.id = ++state.latest; state.events.push(e); }, music(m) { state.music = m; } };
 }
 (async () => {
   // ---- alerts ----
@@ -45,6 +45,17 @@ function make(file, cfg) {
   ok(lines.length === 8 && lines[7].textContent.includes("msg 9") && !d3.getElementById("chatbox").textContent.includes("msg 0"), "chat keeps only the newest 8 lines");
   ok(lines[7].querySelector(".tag").textContent === "TWITCH" && lines[6].querySelector(".tag").textContent === "YOUTUBE", "platform tags shown");
   await sleep(1400); ok(d3.querySelectorAll("#chatbox .m").length === 0, "chat lines fade away after the set time");
+  t.dom.window.close();
+  // ---- now playing ----
+  t = make(require("path").join(__dirname, "out", "music.html"), { colors: {} });
+  const d4 = t.dom.window.document, box = d4.getElementById("musicbox"); await sleep(120);
+  ok(!box.classList.contains("on"), "now-playing box is hidden when nothing plays");
+  t.music({ title: "First Song", artist: "Aria", playing: true }); await sleep(150);
+  ok(box.classList.contains("on") && box.querySelector(".mt").textContent === "First Song" && box.querySelector(".ma").textContent === "Aria", "shows the title and artist while playing");
+  t.music({ title: "<img src=x onerror=1>", artist: "", playing: true }); await sleep(150);
+  ok(box.querySelector(".mt").textContent === "<img src=x onerror=1>" && !d4.querySelector("img") && box.querySelector(".ma").style.display === "none", "titles are shown as plain text and an empty artist line is hidden");
+  t.music({ title: "First Song", artist: "Aria", playing: false }); await sleep(150);
+  ok(!box.classList.contains("on"), "hides again when the music is paused");
   t.dom.window.close();
   console.log(fails ? fails + " FAILED" : "ALL PASSED"); process.exit(fails ? 1 : 0);
 })();

@@ -3,6 +3,7 @@ import { randomBytes, timingSafeEqual } from "node:crypto";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { createV1 } from "./v1.mjs";
 
 const API = "https://www.googleapis.com/youtube/v3";
 const AUTH = "https://accounts.google.com/o/oauth2/v2/auth";
@@ -94,7 +95,7 @@ async function readJson(file, fallback) {
 
 async function saveJson(file, value) {
   await mkdir(path.dirname(file), { recursive: true });
-  const temp = `${file}.${process.pid}.tmp`;
+  const temp = `${file}.${process.pid}.${randomBytes(4).toString("hex")}.tmp`;     // unique per write: two saves at once must not share a file
   await writeFile(temp, JSON.stringify(value, null, 2), { mode: 0o600 });
   await rename(temp, file);
 }
@@ -127,6 +128,7 @@ export function createService({ env = process.env, fetchImpl = fetch, dataDir = 
     }
     const savedToken = await readJson(tokenFile, null);
     if (savedToken?.refresh_token) token = savedToken;
+    else if (env.BOT_REFRESH_TOKEN) token = { refresh_token: env.BOT_REFRESH_TOKEN };   // free hosts: no disk, so keep it in an env variable
     const savedQuota = await readJson(quotaFile, null);
     if (savedQuota && savedQuota.day === pacificDate(now()) && Number.isInteger(savedQuota.used)) {
       quota = { day: savedQuota.day, used: savedQuota.used, streams: savedQuota.streams || {} };
@@ -144,7 +146,11 @@ export function createService({ env = process.env, fetchImpl = fetch, dataDir = 
   }
 
   async function persistQuota() {
-    await saveJson(quotaFile, quota);
+    try {
+      await saveJson(quotaFile, quota);
+    } catch (error) {                       // never fail a request because the counter could not be saved
+      console.error(JSON.stringify({ event: "quota_save_failed", message: error.message }));
+    }
   }
 
   async function reserveQuota(cost) {
@@ -194,6 +200,24 @@ export function createService({ env = process.env, fetchImpl = fetch, dataDir = 
     }
     return data;
   }
+
+  // per-channel daily action counter (shared by the polling mode and the app-driven /v1 mode)
+  const actions = {
+    get(channelId) {
+      const usage = quota.streams[channelId];
+      return usage && usage.day === pacificDate(now()) ? Number(usage.actions) || 0 : 0;
+    },
+    add(channelId) {
+      const today = pacificDate(now());
+      if (quota.day !== today) quota = { day: today, used: 0, streams: {} };
+      quota.streams[channelId] = { day: today, actions: actions.get(channelId) + 1 };
+      persistQuota().catch(() => {});
+    },
+  };
+  const v1 = createV1({
+    env, now, api, accessToken, json, actions,
+    readBody: async (req) => { try { return await parseBody(req); } catch (error) { error.status = 400; throw error; } },
+  });
 
   async function moderate(stream, item) {
     const config = stream.config;
@@ -255,6 +279,7 @@ export function createService({ env = process.env, fetchImpl = fetch, dataDir = 
     if (req.method === "GET" && url.pathname === "/") {
       return html(res, 200, '<h1>ChatVoice YouTube Moderator</h1><p>Service is running.</p><p><a href="/admin">Open admin setup</a></p><p>Health: <a href="/health">/health</a></p>');
     }
+    if (v1.handled(url)) return v1.handle(req, res, url);
     if (url.pathname.startsWith("/api/") && !authorized(req, adminKey)) {
       return json(res, 401, { error: "Unauthorized" });
     }
@@ -306,6 +331,11 @@ document.querySelector("#save").onclick=async()=>{try{const cfg=JSON.parse(docum
       token = { refresh_token: data.refresh_token };
       tokenExpiresAt = 0;
       await saveJson(tokenFile, token);
+      if (env.SHOW_REFRESH_TOKEN === "1") {
+        return html(res, 200, `<h1>Bot account authorized</h1><p>This host has no permanent disk, so keep the login in an environment variable. In your hosting dashboard create
+<b>BOT_REFRESH_TOKEN</b> with the value below, then <b>delete SHOW_REFRESH_TOKEN</b> and redeploy. Treat the value like a password and close this tab afterwards.</p>
+<pre style="white-space:pre-wrap;word-break:break-all;background:#0c0f16;padding:12px;border-radius:8px">${data.refresh_token}</pre>`);
+      }
       return html(res, 200, "<h1>Bot account authorized</h1><p>The refresh token was saved to the service data volume. You can close this tab.</p>");
     }
     if (req.method === "GET" && url.pathname === "/api/streams") {
