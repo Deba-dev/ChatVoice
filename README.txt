@@ -20,7 +20,7 @@ WHAT IS INSIDE
   MUSIC-GUIDE.txt         the no-copyright music player and where to get music
 
 PAGES IN THE APP
-  Connect     paste your YouTube link, Twitch and Kick channel, press Connect (no logins needed to read chat)
+  Connect     paste your YouTube link and channel names, press Connect; optional YouTube/Twitch login enables chat messages and polls
   Live chat   combined feed; grey lines were skipped by moderation
   Voice       voices, speed, volume, "different voice per viewer", Hinglish word list
   Moderation  what gets read aloud: link / command / bot / repeat filters, blocked words
@@ -76,6 +76,7 @@ settings.json, hinglish_words.txt (add short forms: short=how to say it), blocke
 
 NOTES
 - Neural voices need internet. If they fail, the app falls back to Windows voices.
-- YouTube uses the no-login method, Kick uses Kick's unofficial chat connection; either can break if the
-  platform changes. Twitch is read anonymously.
-- The app only READS chat. Deleting or banning on the platforms needs a login and is a later phase.
+- Chat reading is anonymous; YouTube automatically retries after a chat connection drops. Kick uses its
+  unofficial chat connection and remains read-only. YouTube/Twitch login enables sending chat messages and creating polls.
+- Platform sign-in needs the one-time OAuth setup in CLOUD-SETUP.txt. YouTube API quota is shared by all users of the app.
+- YouTube moderation still uses the separate ChatVoice moderator bot; login does not make the app a platform moderator.

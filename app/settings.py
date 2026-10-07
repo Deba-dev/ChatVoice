@@ -5,7 +5,8 @@ import os
 from .config import CLOUD_URL, YT_BOT_HANDLE, YT_BOT_TITLE, YT_BOT_URL
 from .secure import protect, unprotect
 
-SECRET_KEYS = ("cloud_token", "g_client_secret", "ov_external_url", "yt_bot_token")   # stored encrypted on Windows
+SECRET_KEYS = ("cloud_token", "g_client_secret", "ov_external_url", "yt_bot_token",
+               "platform_youtube_session", "platform_twitch_session")   # stored encrypted on Windows
 
 
 def data_dir():
@@ -17,6 +18,8 @@ def data_dir():
 
 DEFAULTS = {
     "youtube": "", "twitch": "", "kick": "", "kick_room": "",
+    "platform_youtube_session": "", "platform_twitch_session": "",
+    "platform_youtube_name": "", "platform_twitch_name": "",
     "engine": "neural", "hi_voice": "hi-IN-SwaraNeural", "en_voice": "hi-IN-MadhurNeural",
     "per_viewer": False, "rate": 0, "volume": 100, "read_name": True, "muted": False,
     "skip_links": True, "skip_cmds": True, "ignore_bots": True, "mods_only": False,

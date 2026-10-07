@@ -15,6 +15,7 @@ class Loopback:
     def __init__(self, bridge, tag, timeout=300):
         self.bridge, self.tag, self.timeout = bridge, tag, timeout
         self.server = None
+        self.cancelled = threading.Event()
 
     def start(self):
         owner = self
@@ -46,10 +47,15 @@ class Loopback:
 
         def work():
             end = time.time() + self.timeout
-            while time.time() < end and self.result is None:
+            while time.time() < end and self.result is None and not self.cancelled.is_set():
                 self.server.handle_request()
             self.server.server_close()
+            if self.cancelled.is_set():
+                return
             self.bridge.done.emit(self.tag, self.result if self.result is not None else {"ok": "0", "error": "timed out"})
 
         threading.Thread(target=work, daemon=True).start()
         return "http://127.0.0.1:%d/done" % port
+
+    def cancel(self):
+        self.cancelled.set()

@@ -1,6 +1,7 @@
 // ChatVoice cloud: Discord role linking for streamers. Runs on Cloudflare Workers (free tier).
 // It never touches money. It only: (1) installs the bot, (2) links viewers to Discord accounts,
 // (3) gives roles when the desktop app reports activity.
+import { handlePlatformAuth } from "./platform-auth.js";
 
 const API = "https://discord.com/api/v10";
 const PLATFORMS = ["youtube", "twitch", "kick"];
@@ -62,14 +63,16 @@ function safeEqual(a, b) {
   return r === 0;
 }
 
-// D1 (SQLite) holds the payment alerts: it is strongly consistent, so alerts arrive in seconds
+// D1 (SQLite) holds payment alerts and encrypted platform account tokens.
 let dbReady = null;
 function db(env) {
-  if (!env.DB) throw new Error("payments storage is not set up (see CLOUD-SETUP.txt, step F)");
+  if (!env.DB) throw new Error("Cloudflare D1 storage is not set up (see CLOUD-SETUP.txt)");
   if (!dbReady) {
     dbReady = (async () => {
       await env.DB.prepare("CREATE TABLE IF NOT EXISTS tips (seq INTEGER PRIMARY KEY AUTOINCREMENT, guild TEXT NOT NULL, pay_id TEXT NOT NULL, ts INTEGER NOT NULL, name TEXT, message TEXT, amount REAL, currency TEXT, display TEXT, UNIQUE(guild, pay_id))").run();
       await env.DB.prepare("CREATE INDEX IF NOT EXISTS tips_guild_seq ON tips (guild, seq)").run();
+      await env.DB.prepare("CREATE TABLE IF NOT EXISTS platform_accounts (id INTEGER PRIMARY KEY AUTOINCREMENT, session_hash TEXT NOT NULL UNIQUE, platform TEXT NOT NULL, provider_user_id TEXT NOT NULL, display_name TEXT NOT NULL, access_token TEXT NOT NULL, refresh_token TEXT NOT NULL, expires_at INTEGER NOT NULL)").run();
+      await env.DB.prepare("CREATE TABLE IF NOT EXISTS platform_api_quota (day TEXT PRIMARY KEY, used INTEGER NOT NULL)").run();
     })().catch((e) => { dbReady = null; throw e; });
   }
   return dbReady.then(() => env.DB);
@@ -373,6 +376,11 @@ function health(env) {
     DISCORD_CLIENT_SECRET: { set: set("DISCORD_CLIENT_SECRET"), looks_right: (env.DISCORD_CLIENT_SECRET || "").length >= 28 },
     DISCORD_BOT_TOKEN: { set: set("DISCORD_BOT_TOKEN"), looks_right: (env.DISCORD_BOT_TOKEN || "").split(".").length === 3 },
     payments_storage_ok: !!env.DB,
+    GOOGLE_OAUTH_CLIENT_ID: { set: set("GOOGLE_OAUTH_CLIENT_ID"), looks_right: (env.GOOGLE_OAUTH_CLIENT_ID || "").endsWith(".apps.googleusercontent.com") },
+    GOOGLE_OAUTH_CLIENT_SECRET: { set: set("GOOGLE_OAUTH_CLIENT_SECRET") },
+    TWITCH_CLIENT_ID: { set: set("TWITCH_CLIENT_ID"), looks_right: (env.TWITCH_CLIENT_ID || "").length >= 10 },
+    TWITCH_CLIENT_SECRET: { set: set("TWITCH_CLIENT_SECRET") },
+    PLATFORM_TOKEN_ENCRYPTION_KEY: { set: set("PLATFORM_TOKEN_ENCRYPTION_KEY"), looks_right: /^[A-Za-z0-9+/]{43}=$/.test(env.PLATFORM_TOKEN_ENCRYPTION_KEY || "") },
     note: "looks_right only checks the shape of the value, never shows it",
   });
 }
@@ -618,6 +626,10 @@ async function api(request, env, url) {
 
 async function route(request, env, url) {
   const origin = url.origin, p = url.pathname;
+  if (p.startsWith("/platform-auth/")) {
+    const result = await handlePlatformAuth(request, env, url);
+    if (result) return result;
+  }
   if (p === "/") return page("ChatVoice cloud", "<p>This server links Discord roles for ChatVoice streamers. Nothing to see here.</p>");
   if (p === "/health") return health(env);
   const missing = missingConfig(env);
@@ -650,7 +662,9 @@ export default {
       return await route(request, env, url);   // 'await' is what makes the catch below work
     } catch (e) {
       const msg = String((e && e.message) || e);
-      return url.pathname.startsWith("/api/") ? json({ error: msg }, 500) : page("Something went wrong", "<p>" + esc(msg) + "</p>", 500);
+      return url.pathname.startsWith("/api/") || url.pathname.startsWith("/platform-auth/")
+        ? json({ error: msg }, 500)
+        : page("Something went wrong", "<p>" + esc(msg) + "</p>", 500);
     }
   },
 };

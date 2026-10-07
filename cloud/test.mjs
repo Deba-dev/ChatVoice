@@ -5,6 +5,7 @@ const store = new Map();
 const KV = { async get(k) { return store.has(k) ? store.get(k) : null; }, async put(k, v) { store.set(k, v); }, async delete(k) { store.delete(k); } };
 const env = { KV, DISCORD_CLIENT_ID: "CID", DISCORD_CLIENT_SECRET: "SEC", DISCORD_BOT_TOKEN: "BOT" };
 const puts = [];
+const platformCalls = [];
 let memberOk = true, roleStatus = 204;
 const baseRoles = () => [{ id: "1", name: "@everyone", position: 0 }, { id: "100001", name: "Verified", position: 3 }, { id: "100002", name: "Regular", position: 2 }, { id: "100003", name: "Supporter", position: 4 }, { id: "9", name: "BotRole", managed: true, position: 5 }];
 let rolesNow = baseRoles(), roleCreateStatus = 200, systemChannel = "C1", inviteSeq = 0; const createdRoles = [], createdInvites = [];
@@ -14,6 +15,32 @@ const putsFull = [];
 globalThis.fetch = async (url, init = {}) => {
   const u = new URL(url), p = u.pathname.replace("/api/v10", ""), m = init.method || "GET";
   const j = (o, s = 200) => new Response(JSON.stringify(o), { status: s });
+  if (u.hostname === "oauth2.googleapis.com" && p === "/token") {
+    const body = new URLSearchParams(init.body);
+    return j({ access_token: body.get("grant_type") === "refresh_token" ? "YT_ACCESS_2" : "YT_ACCESS",
+      refresh_token: "YT_REFRESH", expires_in: 3600 });
+  }
+  if ((u.hostname === "oauth2.googleapis.com" || u.hostname === "id.twitch.tv") && p === "/revoke") return new Response(null, { status: 200 });
+  if (u.hostname === "id.twitch.tv" && p === "/oauth2/token") {
+    return j({ access_token: "TW_ACCESS", refresh_token: "TW_REFRESH", expires_in: 3600 });
+  }
+  if (u.hostname === "openidconnect.googleapis.com" && p === "/v1/userinfo") {
+    return j({ sub: "GOOGLE_USER", name: "Test YouTube" });
+  }
+  if (u.hostname === "www.googleapis.com" && p === "/youtube/v3/liveBroadcasts") {
+    return j({ items: [{ id: "abcdefghijk", snippet: { liveChatId: "CHAT_ID" } }] });
+  }
+  if (u.hostname === "www.googleapis.com" && p === "/youtube/v3/liveChatMessages") {
+    platformCalls.push({ platform: "youtube", method: m, body: init.body && JSON.parse(init.body) });
+    return j({ id: "YT_ACTION" });
+  }
+  if (u.hostname === "api.twitch.tv" && p === "/helix/users") {
+    return j({ data: [{ id: "TWITCH_USER", display_name: "Test Twitch" }] });
+  }
+  if (u.hostname === "api.twitch.tv" && (p === "/helix/chat/messages" || p === "/helix/polls")) {
+    platformCalls.push({ platform: "twitch", path: p, body: init.body && JSON.parse(init.body) });
+    return j({ data: [{ id: "TW_ACTION", message_id: "TW_ACTION", is_sent: true }] });
+  }
   if (p === "/oauth2/token") {
     const body = new URLSearchParams(init.body);
     if (body.get("client_secret") === "BAD") return j({ error: "invalid_client" }, 401);
@@ -95,29 +122,135 @@ r = await worker.fetch(new Request("https://cv.example/setup"), { KV });
 html = await r.text(); ok(r.status === 500 && html.includes("DISCORD_CLIENT_ID"), "missing secrets -> page that names them");
 r = await worker.fetch(new Request("https://cv.example/health"), { KV, DISCORD_CLIENT_ID: "12345678901234567890", DISCORD_CLIENT_SECRET: "x", DISCORD_BOT_TOKEN: "" });
 const h = await r.json(); ok(h.DISCORD_CLIENT_ID.looks_right && !h.DISCORD_CLIENT_SECRET.looks_right && !h.DISCORD_BOT_TOKEN.set, "/health reports which settings are missing or look wrong");
+ok(!h.GOOGLE_OAUTH_CLIENT_ID.set && !h.PLATFORM_TOKEN_ENCRYPTION_KEY.set, "/health reports missing platform OAuth setup without revealing values");
+r = await call("/platform-auth/start?" + new URLSearchParams({ platform: "youtube", return: "http://127.0.0.1:5599/done" }));
+ok(r.status === 503 && (await r.json()).error.includes("GOOGLE_OAUTH_CLIENT_ID"), "platform login fails with an explicit setup instruction when OAuth is not configured");
 const broken = { ...env, KV: { async get() { return null; }, async put() { throw new Error("storage down"); }, async delete() {} } };
 r = await worker.fetch(new Request("https://cv.example/setup"), broken); ok(r.status === 500 && (await r.text()).includes("storage down"), "unexpected crash -> readable page");
 
 
 // 8. payments: Razorpay webhook -> D1 queue -> app
 class FakeDB {
-  constructor() { this.rows = []; this.seq = 0; }
+  constructor() { this.rows = []; this.accounts = []; this.quota = new Map(); this.seq = 0; this.accountSeq = 0; }
   prepare(sql) {
     const self = this;
     return { args: [], bind(...a) { this.args = a; return this; },
       async run() {
-        if (sql.startsWith("INSERT OR IGNORE")) {
+        if (sql.startsWith("INSERT OR IGNORE INTO platform_api_quota")) {
+          const [day] = this.args;
+          if (!self.quota.has(day)) self.quota.set(day, 0);
+        }
+        if (sql.startsWith("UPDATE platform_api_quota")) {
+          const [cost, day, extraCost, limit] = this.args;
+          const used = self.quota.get(day) || 0;
+          if (used + extraCost <= limit) {
+            self.quota.set(day, used + cost);
+            return { meta: { changes: 1 } };
+          }
+          return { meta: { changes: 0 } };
+        }
+        if (sql.startsWith("INSERT INTO platform_accounts")) {
+          const [session_hash, platform, provider_user_id, display_name, access_token, refresh_token, expires_at] = this.args;
+          let row = self.accounts.find((x) => x.session_hash === session_hash);
+          if (!row) { row = { id: ++self.accountSeq }; self.accounts.push(row); }
+          Object.assign(row, { session_hash, platform, provider_user_id, display_name, access_token, refresh_token, expires_at });
+        }
+        if (sql.startsWith("UPDATE platform_accounts")) {
+          const [access_token, refresh_token, expires_at, id] = this.args;
+          const row = self.accounts.find((x) => x.id === id);
+          if (row) Object.assign(row, { access_token, refresh_token, expires_at });
+        }
+        if (sql.startsWith("DELETE FROM platform_accounts")) {
+          const previous = self.accounts.length;
+          self.accounts = self.accounts.filter((x) => x.session_hash !== this.args[0]);
+          return { meta: { changes: previous - self.accounts.length } };
+        }
+        if (sql.startsWith("INSERT OR IGNORE INTO tips")) {
           const [guild, pay_id, ts, name, message, amount, currency, display] = this.args;
           if (!self.rows.some((x) => x.guild === guild && x.pay_id === pay_id)) self.rows.push({ seq: ++self.seq, guild, pay_id, ts, name, message, amount, currency, display });
         }
         if (sql.startsWith("DELETE")) self.rows = self.rows.filter((x) => x.ts >= this.args[0]);
         return {};
       },
-      async first() { const m = self.rows.filter((x) => x.guild === this.args[0]).reduce((a, x) => Math.max(a, x.seq), 0); return { m }; },
+      async first() {
+        if (sql.startsWith("SELECT * FROM platform_accounts")) return self.accounts.find((x) => x.session_hash === this.args[0]) || null;
+        const m = self.rows.filter((x) => x.guild === this.args[0]).reduce((a, x) => Math.max(a, x.seq), 0);
+        return { m };
+      },
       async all() { return { results: self.rows.filter((x) => x.guild === this.args[0] && x.seq > this.args[1]).slice(0, 20) }; } };
   }
 }
 env.DB = new FakeDB();
+Object.assign(env, {
+  GOOGLE_OAUTH_CLIENT_ID: "GOOGLE_CLIENT_ID",
+  GOOGLE_OAUTH_CLIENT_SECRET: "GOOGLE_CLIENT_SECRET",
+  TWITCH_CLIENT_ID: "TWITCH_CLIENT_ID",
+  TWITCH_CLIENT_SECRET: "TWITCH_CLIENT_SECRET",
+  PLATFORM_TOKEN_ENCRYPTION_KEY: Buffer.alloc(32, 7).toString("base64"),
+});
+const localReturn = "http://127.0.0.1:5599/done";
+const beginPlatformLogin = async (platform) => {
+  const started = await call("/platform-auth/start?" + new URLSearchParams({ platform, return: localReturn }));
+  const auth = await started.json();
+  const authorize = new URL(auth.authorizeUrl);
+  const callback = await call("/platform-auth/" + platform + "/callback?" + new URLSearchParams({
+    state: authorize.searchParams.get("state"), code: "provider-code",
+  }));
+  return { started, authorize, callback };
+};
+let ytLogin = await beginPlatformLogin("youtube");
+let ytReturn = new URL(ytLogin.callback.headers.get("location"));
+ok(ytLogin.started.status === 200 && ytLogin.authorize.searchParams.get("scope").includes("youtube.force-ssl")
+  && ytReturn.origin + ytReturn.pathname === localReturn && ytReturn.searchParams.get("ok") === "1"
+  && !!ytReturn.searchParams.get("ticket") && !ytReturn.search.includes("YT_ACCESS"),
+"YouTube OAuth uses required scope and returns only a short-lived one-time ticket");
+let redeemed = await call("/platform-auth/redeem", { method: "POST", body: JSON.stringify({ ticket: ytReturn.searchParams.get("ticket") }) });
+let ytAccount = await redeemed.json();
+let ytHeaders = { Authorization: "Bearer " + ytAccount.session, "content-type": "application/json" };
+ok(redeemed.status === 200 && ytAccount.platform === "youtube" && ytAccount.displayName === "Test YouTube",
+  "YouTube OAuth ticket redeems into an app session and account identity");
+r = await call("/platform-auth/redeem", { method: "POST", body: JSON.stringify({ ticket: ytReturn.searchParams.get("ticket") }) });
+ok(r.status === 400, "OAuth ticket can only be redeemed once");
+r = await call("/platform-auth/account", { headers: ytHeaders });
+ok((await r.json()).displayName === "Test YouTube", "YouTube account session is recognized");
+const ytRow = env.DB.accounts.find((x) => x.platform === "youtube");
+ytRow.expires_at = Math.floor(Date.now() / 1000) - 1;
+r = await call("/platform-auth/account", { headers: ytHeaders });
+ok(r.status === 200 && ytRow.expires_at > Math.floor(Date.now() / 1000) && !ytRow.access_token.includes("YT_ACCESS_2"),
+  "expired YouTube access tokens refresh and remain encrypted in D1");
+r = await call("/platform-auth/message", { method: "POST", headers: ytHeaders, body: JSON.stringify({ platform: "youtube", videoId: "abcdefghijk", text: "Hello chat" }) });
+ok(r.status === 200 && platformCalls.some((x) => x.platform === "youtube" && x.body.snippet.textMessageDetails.messageText === "Hello chat"),
+  "YouTube message is sent to the signed-in channel's active live chat");
+r = await call("/platform-auth/poll", { method: "POST", headers: ytHeaders, body: JSON.stringify({ platform: "youtube", videoId: "abcdefghijk", question: "Next game?", options: ["A", "B"] }) });
+ok(r.status === 200 && platformCalls.some((x) => x.platform === "youtube" && x.body.snippet.type === "pollEvent" && x.body.snippet.pollDetails.metadata.options.length === 2),
+  "YouTube live poll is created with valid choices");
+const quotaDay = [...env.DB.quota.keys()][0], apiCallsBeforeQuotaLimit = platformCalls.length;
+env.DB.quota.set(quotaDay, 8000);
+r = await call("/platform-auth/message", { method: "POST", headers: ytHeaders, body: JSON.stringify({ platform: "youtube", videoId: "abcdefghijk", text: "Over quota" }) });
+ok(r.status === 429 && (await r.json()).error.includes("shared YouTube action budget") && platformCalls.length === apiCallsBeforeQuotaLimit,
+  "daily shared YouTube budget blocks actions before another API call");
+ok(!JSON.stringify(env.DB.accounts).includes("YT_ACCESS") && !JSON.stringify(env.DB.accounts).includes("YT_REFRESH"),
+  "platform OAuth access and refresh tokens are encrypted before D1 storage");
+
+let twLogin = await beginPlatformLogin("twitch");
+let twReturn = new URL(twLogin.callback.headers.get("location"));
+let twRedeemed = await call("/platform-auth/redeem", { method: "POST", body: JSON.stringify({ ticket: twReturn.searchParams.get("ticket") }) });
+let twAccount = await twRedeemed.json();
+let twHeaders = { Authorization: "Bearer " + twAccount.session, "content-type": "application/json" };
+ok(twLogin.authorize.searchParams.get("scope").includes("user:write:chat")
+  && twLogin.authorize.searchParams.get("scope").includes("channel:manage:polls")
+  && twAccount.displayName === "Test Twitch", "Twitch login requests chat and poll permissions");
+r = await call("/platform-auth/message", { method: "POST", headers: twHeaders, body: JSON.stringify({ platform: "twitch", text: "Hello Twitch" }) });
+ok(r.status === 200 && platformCalls.some((x) => x.path === "/helix/chat/messages" && x.body.message === "Hello Twitch"),
+  "Twitch chat message is sent with the signed-in broadcaster account");
+r = await call("/platform-auth/poll", { method: "POST", headers: twHeaders, body: JSON.stringify({ platform: "twitch", question: "Next game?", options: ["A", "B"], duration: 60 }) });
+ok(r.status === 200 && platformCalls.some((x) => x.path === "/helix/polls" && x.body.choices.length === 2),
+  "Twitch poll is created with the signed-in broadcaster account");
+r = await call("/platform-auth/account", { method: "DELETE", headers: ytHeaders });
+ok(r.status === 200, "disconnect removes only the YouTube account session");
+r = await call("/platform-auth/account", { headers: ytHeaders });
+ok(r.status === 401, "disconnected platform session cannot be reused");
+
 const { createHmac } = await import("node:crypto");
 const SECRET = "whsec_test_123";
 r = await call("/api/config", { method: "PUT", headers: H, body: JSON.stringify({ verifiedRole: "100001", regularRole: "100002", supporterRole: "100003", regularMsgs: 3, razorpaySecret: SECRET }) });

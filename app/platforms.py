@@ -3,6 +3,7 @@ import asyncio
 import json
 import re
 import threading
+import time
 import urllib.request
 
 from PySide6.QtCore import QObject, Signal
@@ -114,33 +115,61 @@ class YouTubeSource(Source):
         vid = youtube_id(target)
         if not vid:
             return self._status("Enter a valid live link or video ID")
-        self._status("Connecting...")
         try:
             import pytchat
-            chat = pytchat.create(video_id=vid, interruptable=False)
         except Exception as e:
-            return self._status("Could not connect (is it live?) %s" % str(e)[:60])
-        self._status("Connected", True)
-        first = True
-        while not self.stop_evt.is_set() and chat.is_alive():
-            items = chat.get().sync_items()
-            if first:
-                first = False
-            else:
-                for c in items:
-                    if c.type in ("textMessage", "superChat", "superSticker"):
-                        paid = c.type != "textMessage"
-                        a = c.author
-                        self.hub.message.emit(Message(
-                            "youtube", a.name, c.message or "", "super" if paid else "chat",
-                            getattr(c, "amountString", "") if paid else "",
-                            bool(getattr(a, "isChatModerator", False) or getattr(a, "isChatOwner", False)),
-                            str(getattr(a, "channelId", "") or "")))
-            self.stop_evt.wait(1)
-        try:
-            chat.terminate()
-        except Exception:
-            pass
+            return self._status("Could not load YouTube chat support: %s" % str(e)[:60])
+
+        retry_delay = 2
+        connected_once = False
+        while not self.stop_evt.is_set():
+            self._status("Reconnecting..." if connected_once else "Connecting...")
+            try:
+                chat = pytchat.create(video_id=vid, interruptable=False)
+            except Exception as e:
+                if not connected_once:
+                    return self._status("Could not connect (is it live?) %s" % str(e)[:60])
+                self._status("Reconnecting... (%s)" % str(e)[:40])
+                self.stop_evt.wait(retry_delay)
+                retry_delay = min(retry_delay * 2, 30)
+                continue
+
+            connected_once = True
+            connected_at = time.monotonic()
+            self._status("Connected", True)
+            first = True
+            try:
+                while not self.stop_evt.is_set() and chat.is_alive():
+                    items = chat.get().sync_items()
+                    if first:
+                        first = False
+                    else:
+                        for c in items:
+                            if c.type in ("textMessage", "superChat", "superSticker"):
+                                paid = c.type != "textMessage"
+                                a = c.author
+                                self.hub.message.emit(Message(
+                                    "youtube", a.name, c.message or "", "super" if paid else "chat",
+                                    getattr(c, "amountString", "") if paid else "",
+                                    bool(getattr(a, "isChatModerator", False) or getattr(a, "isChatOwner", False)),
+                                    str(getattr(a, "channelId", "") or "")))
+                    self.stop_evt.wait(1)
+            except Exception as e:
+                if not self.stop_evt.is_set():
+                    self._status("Reconnecting... (%s)" % str(e)[:40])
+            finally:
+                try:
+                    chat.terminate()
+                except Exception:
+                    pass
+
+            if self.stop_evt.is_set():
+                break
+            if time.monotonic() - connected_at >= 60:
+                retry_delay = 2
+            self._status("Reconnecting...")
+            self.stop_evt.wait(retry_delay)
+            retry_delay = min(retry_delay * 2, 30)
 
 
 class _AsyncSource(Source):

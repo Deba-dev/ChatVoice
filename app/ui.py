@@ -6,7 +6,7 @@ import time
 
 from PySide6.QtCore import Property, QEasingCurve, QEvent, QParallelAnimationGroup, QPropertyAnimation, QSize, Qt, QTimer, QUrl
 from PySide6.QtGui import QColor, QDesktopServices, QFont, QFontDatabase, QIcon, QPainter, QPalette, QPen, QPixmap, QTextBlockFormat, QTextCursor, QTextOption
-from PySide6.QtWidgets import (QApplication, QButtonGroup, QCheckBox, QColorDialog, QComboBox, QFrame, QGraphicsDropShadowEffect, QGraphicsOpacityEffect, QGridLayout, QHBoxLayout,
+from PySide6.QtWidgets import (QApplication, QButtonGroup, QCheckBox, QColorDialog, QComboBox, QDialog, QDialogButtonBox, QFrame, QGraphicsDropShadowEffect, QGraphicsOpacityEffect, QGridLayout, QHBoxLayout,
                                QLabel, QLineEdit, QPlainTextEdit, QPushButton, QScrollArea, QSlider, QSpinBox, QStackedWidget,
                                QTextEdit, QVBoxLayout, QWidget)
 
@@ -17,6 +17,7 @@ from .overlay import Overlay
 from .overlay_ui import OverlayPage
 from .payments import TipPoller
 from .payments_page import PaymentsPage
+from .platform_auth import PlatformAuth
 from .icons import nav_icon
 from .music import MusicPlayer
 from .music_page import MusicPage
@@ -252,10 +253,11 @@ def labeled(text, widget, hint=""):
 
 
 class PlatformCard(QFrame):
-    def __init__(self, key, title, placeholder, source, settings, extra=None, hint="", field=""):
+    def __init__(self, key, title, placeholder, source, settings, extra=None, hint="", field="", platform_auth=None):
         super().__init__()
         self.setObjectName("tile")
         self.key, self.source, self.s = key, source, settings
+        self.platform_auth = platform_auth
         lay = QVBoxLayout(self)
         lay.setContentsMargins(18, 16, 18, 16)
         lay.setSpacing(10)
@@ -309,6 +311,36 @@ class PlatformCard(QFrame):
         lay.addWidget(self.btn, 0, Qt.AlignLeft)
         self.btn.clicked.connect(self.toggle)
         self.edit.returnPressed.connect(self.toggle)
+        self.auth_label = None
+        if platform_auth and key in platform_auth.SUPPORTED:
+            auth_row = QHBoxLayout()
+            self.auth_label = QLabel("Account not connected")
+            self.auth_label.setObjectName("hint")
+            auth_row.addWidget(self.auth_label, 1)
+            self.auth_btn = QPushButton()
+            self.auth_btn.setObjectName("quiet")
+            self.auth_btn.setCursor(Qt.PointingHandCursor)
+            self.auth_btn.clicked.connect(self.toggle_auth)
+            auth_row.addWidget(self.auth_btn)
+            lay.addLayout(auth_row)
+            platform_auth.changed.connect(self._auth_changed)
+            self._auth_changed(key)
+
+    def toggle_auth(self):
+        if self.platform_auth.is_connected(self.key):
+            self.platform_auth.disconnect(self.key)
+        else:
+            self.platform_auth.login(self.key)
+
+    def _auth_changed(self, platform):
+        if platform != self.key or self.auth_label is None:
+            return
+        if self.platform_auth.is_connected(platform):
+            self.auth_label.setText("Signed in as %s" % (self.platform_auth.display_name(platform) or "account"))
+            self.auth_btn.setText("Disconnect account")
+        else:
+            self.auth_label.setText("Sign in to send chat and polls")
+            self.auth_btn.setText("Login")
 
     def enterEvent(self, event):
         if not self.s.get("lite_mode") and self.graphicsEffect() is None:
@@ -392,6 +424,7 @@ class MainWindow(QWidget):
         self.fx = FX()
         self.fx.enabled = not bool(self.s.get("lite_mode"))
         self.bridge = Bridge()
+        self.platform_auth = PlatformAuth(self.s, self.bridge)
         self.cloud = Cloud(self.s)
         self.links = LinkManager(self.s, self.cloud, self.bridge, os.path.join(data_dir(), "counts.json"))
         self.discord = DiscordPage(self.s, self.cloud, self.bridge, self.links)
@@ -429,6 +462,10 @@ class MainWindow(QWidget):
 
         self.hub.message.connect(self.on_message)
         self.hub.status.connect(self.on_status)
+        self.platform_auth.notice.connect(lambda t: self.feed.append("<span style='color:#8ab4ff'>Account: %s</span>" % esc(t)))
+        self.platform_auth.changed.connect(self._platform_account_changed)
+        self.platform_auth.refresh("youtube")
+        self.platform_auth.refresh("twitch")
         self.speaker.note.connect(lambda t: self.feed.append("<span style='color:#ffb020'>%s</span>" % esc(t)))
         self.links.notice.connect(lambda t: self.feed.append("<span style='color:#7c9cff'>Discord: %s</span>" % esc(t)))
         self.sync = QTimer(self)                      # report activity to Discord once a minute
@@ -659,9 +696,11 @@ class MainWindow(QWidget):
         lay.addLayout(stats)
         self.cards = {
             "youtube": PlatformCard("youtube", "YouTube Live", "Paste a live link or video ID", YouTubeSource(self.hub), self.s,
-                                    hint="Public live chat. No sign-in.", field="Stream link or video ID"),
+                                    hint="Chat reading reconnects automatically. Sign in to send chat and polls.",
+                                    field="Stream link or video ID", platform_auth=self.platform_auth),
             "twitch": PlatformCard("twitch", "Twitch", "Channel name", TwitchSource(self.hub), self.s,
-                                   hint="Reads chat without a token.", field="Channel name"),
+                                   hint="Reads chat anonymously. Sign in to send chat and polls.", field="Channel name",
+                                   platform_auth=self.platform_auth),
             "kick": PlatformCard("kick", "Kick", "Channel name", KickSource(self.hub), self.s,
                                  extra=("kick_room", "Chatroom ID, only if the name lookup fails"),
                                  hint="Public chat by channel name.", field="Channel name"),
@@ -695,9 +734,9 @@ class MainWindow(QWidget):
     def _page_feed(self):
         page = QWidget()
         page.setObjectName("page")
-        lay = QHBoxLayout(page)
+        lay = QVBoxLayout(page)
         lay.setContentsMargins(0, 8, 0, 0)
-        lay.setSpacing(12)
+        lay.setSpacing(10)
         self.chat_box = ChatStage()
         self.feed = ChatFeed(self.chat_box)
         self.feed.setObjectName("feed")
@@ -730,9 +769,86 @@ class MainWindow(QWidget):
         self.chat_box.popup = self.chat_popup
         self.chat_popup.hide()
         lay.addWidget(self.chat_box, 1)
+        controls = QFrame()
+        controls.setObjectName("tile")
+        row = QHBoxLayout(controls)
+        row.setContentsMargins(12, 8, 12, 8)
+        self.action_platform = QComboBox()
+        self.action_platform.addItem("YouTube", "youtube")
+        self.action_platform.addItem("Twitch", "twitch")
+        self.action_platform.currentIndexChanged.connect(self._action_platform_changed)
+        self.message_edit = QLineEdit()
+        self.message_edit.setPlaceholderText("Sign in, then type a chat message...")
+        self.message_edit.returnPressed.connect(self._send_chat_message)
+        self.send_chat_btn = QPushButton("Send")
+        self.send_chat_btn.setObjectName("primary")
+        self.send_chat_btn.clicked.connect(self._send_chat_message)
+        self.poll_btn = QPushButton("Create poll")
+        self.poll_btn.setObjectName("quiet")
+        self.poll_btn.clicked.connect(self._create_chat_poll)
+        row.addWidget(self.action_platform)
+        row.addWidget(self.message_edit, 1)
+        row.addWidget(self.send_chat_btn)
+        row.addWidget(self.poll_btn)
+        lay.addWidget(controls)
+        self._action_platform_changed()
         QApplication.instance().installEventFilter(self)
         self._apply_chat_style()
         return page
+
+    def _action_platform_changed(self, *_):
+        if not hasattr(self, "action_platform"):
+            return
+        platform = self.action_platform.currentData()
+        if platform == "youtube":
+            self.message_edit.setMaxLength(200)
+        else:
+            self.message_edit.setMaxLength(500)
+
+    def _platform_account_changed(self, platform):
+        if not hasattr(self, "action_platform") or platform not in ("youtube", "twitch"):
+            return
+        index = self.action_platform.findData(platform)
+        if index < 0:
+            return
+        name = self.platform_auth.display_name(platform)
+        label = platform.title() + ((" — " + name) if self.platform_auth.is_connected(platform) and name
+                                    else (" — signed in" if self.platform_auth.is_connected(platform) else " — sign-in needed"))
+        self.action_platform.setItemText(index, label)
+
+    def _send_chat_message(self):
+        self.platform_auth.send_message(self.action_platform.currentData(), self.message_edit.text())
+
+    def _create_chat_poll(self):
+        platform = self.action_platform.currentData()
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Create %s poll" % platform.title())
+        layout = QVBoxLayout(dialog)
+        question = QLineEdit()
+        question.setMaxLength(60 if platform == "twitch" else 100)
+        question.setPlaceholderText("Poll question")
+        layout.addWidget(question)
+        options = []
+        max_options = 5 if platform == "twitch" else 4
+        for index in range(max_options):
+            option = QLineEdit()
+            option.setMaxLength(25 if platform == "twitch" else 50)
+            option.setPlaceholderText("Option %d%s" % (index + 1, " (required)" if index < 2 else " (optional)"))
+            options.append(option)
+            layout.addWidget(option)
+        duration = QSpinBox()
+        duration.setRange(15, 180)
+        duration.setSuffix(" seconds")
+        duration.setValue(60)
+        if platform == "twitch":
+            layout.addWidget(duration)
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        layout.addWidget(buttons)
+        if dialog.exec() == QDialog.Accepted:
+            self.platform_auth.create_poll(platform, question.text(), [item.text() for item in options],
+                                           duration.value() if platform == "twitch" else 60)
 
     def _set_chat_style_open(self, open_):
         self.chat_style_btn.setChecked(open_)

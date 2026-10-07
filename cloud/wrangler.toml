@@ -9,13 +9,15 @@ crons = ["*/2 * * * *"]
 # Run:  npx wrangler kv namespace create KV   and paste the printed id below
 [[kv_namespaces]]
 binding = "KV"
-id = "PASTE_KV_ID_HERE"
+id = "8044a5a97b2a430781a34d6040e98c1c"
 
 # Payment alerts database. Run:  npx wrangler d1 create chatvoice  and paste the printed id below
 [[d1_databases]]
 binding = "DB"
 database_name = "chatvoice"
-database_id = "PASTE_D1_ID_HERE"
+database_id = "b0c0a84c-ef80-4432-830b-479742f035be"
 
-# Secrets (set with: npx wrangler secret put NAME)
+# Secrets (set with: npx wrangler secret put NAME; see CLOUD-SETUP.txt)
 #   DISCORD_CLIENT_ID, DISCORD_CLIENT_SECRET, DISCORD_BOT_TOKEN
+#   GOOGLE_OAUTH_CLIENT_ID, GOOGLE_OAUTH_CLIENT_SECRET, TWITCH_CLIENT_ID, TWITCH_CLIENT_SECRET
+#   PLATFORM_TOKEN_ENCRYPTION_KEY
