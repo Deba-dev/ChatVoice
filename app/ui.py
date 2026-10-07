@@ -1234,7 +1234,9 @@ class MainWindow(QWidget):
         (self.connected.add if ok else self.connected.discard)(platform)
         self._sync_summary()
         if ok:
-            self.discord.auto_announce()
+            self.discord.auto_announce(platform)
+        elif not self.connected:
+            self.discord.reset_announce()
         if platform == "youtube":
             if ok and self.ytmod.verified:
                 self.ytmod.refresh_info()

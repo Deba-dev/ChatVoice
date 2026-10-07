@@ -6,7 +6,7 @@ from PySide6.QtCore import Qt, QUrl
 from PySide6.QtGui import QDesktopServices, QGuiApplication
 from PySide6.QtWidgets import QComboBox, QHBoxLayout, QLabel, QLineEdit, QPushButton, QSpinBox, QVBoxLayout, QWidget
 
-from .discord import post_webhook, run_bg
+from .discord import post_live_announcement, post_webhook, run_bg
 from .oauth_local import Loopback
 from .theme import DEFAULT_THEME, THEMES
 from .ui_kit import (FormScrollArea, Switch, bind_switch, copy_row, field_row, hrow, info_box, make_badge,
@@ -104,15 +104,21 @@ class DiscordPage(FormScrollArea):
 
         # ---------- 3. announcements ----------
         c, cl = section_card("Go-live announcements",
-                             "Optional. Create a webhook in Discord (channel settings > Integrations > Webhooks > Copy URL) and paste it here.")
+                             "Posts a Discord card with your message and a clickable YouTube live link.")
         self.hook = QLineEdit(self.s.get("webhook_url"))
         self.hook.setPlaceholderText("https://discord.com/api/webhooks/...")
         self.hook.editingFinished.connect(lambda: self.s.set("webhook_url", self.hook.text().strip()))
+        self.yt = QLineEdit(self.s.get("youtube"))
+        self.yt.setPlaceholderText("https://youtube.com/watch?v=... or a video ID")
+        self.yt.editingFinished.connect(lambda: self.s.set("youtube", self.yt.text().strip()))
         self.text = QLineEdit(self.s.get("announce_text"))
+        self.text.setPlaceholderText("I'm live! Come hang out")
         self.text.editingFinished.connect(lambda: self.s.set("announce_text", self.text.text()))
         cl.addWidget(field_row("Webhook URL", "Where live announcements are posted.", self.hook))
-        cl.addWidget(field_row("Announcement text", "Message sent when you announce or auto-connect.", self.text))
-        cl.addWidget(option_switch_row("Announce automatically when I connect", "Posts to Discord when you connect to a platform.",
+        cl.addWidget(field_row("YouTube live link", "The YouTube URL used as the card link.", self.yt))
+        cl.addWidget(field_row("Custom message", "Shown as the main text on the card.", self.text))
+        cl.addWidget(option_switch_row("Announce automatically when YouTube connects",
+                                       "Posts the card when the YouTube chat connects.",
                                        bind_switch(self.s, "announce_auto", accent)))
         cl.addWidget(option_switch_row("Post Super Chats / Bits to Discord", "Forwards paid messages to the same webhook.",
                                        bind_switch(self.s, "post_super", accent)))
@@ -345,15 +351,22 @@ class DiscordPage(FormScrollArea):
 
     def announce_now(self):
         self.s.set("webhook_url", self.hook.text().strip())
+        self.s.set("youtube", self.yt.text().strip())
         self.s.set("announce_text", self.text.text())
         self.hstatus.setText("Sending...")
-        url, txt = self.s.get("webhook_url"), self.s.get("announce_text")
-        run_bg(self.bridge, "ui:hook", lambda: post_webhook(url, "\U0001F534 " + txt))
+        url, txt, yt = self.s.get("webhook_url"), self.s.get("announce_text"), self.s.get("youtube")
+        run_bg(self.bridge, "ui:hook", lambda: post_live_announcement(url, txt, yt))
 
-    def auto_announce(self):
-        if self.s.get("announce_auto") and self.s.get("webhook_url") and not self._announced:
+    def auto_announce(self, platform=None):
+        if platform and platform != "youtube":
+            return
+        yt = self.s.get("youtube") or ""
+        if self.s.get("announce_auto") and self.s.get("webhook_url") and yt and not self._announced:
             self._announced = True
             self.announce_now()
+
+    def reset_announce(self):
+        self._announced = False
 
     def post_paid(self, m):
         if self.s.get("post_super") and self.s.get("webhook_url"):
