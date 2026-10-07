@@ -37,20 +37,21 @@ F. CHECK
    Open  https://YOUR-ADDRESS/health  : every item should say true. It never shows secret values.
    Optional self-test of the cloud code:  node test.mjs
 
-EACH STREAMER  (ChatVoice > Discord page)
-1. Paste the cloud address. Click "Add bot to my server", choose the server, Authorize.
-   The bot asks for three permissions: Manage Roles (to create/give viewer roles), Manage Server (to read invite usage),
-   and Create Instant Invite (to create the viewer invite links automatically). If you added the bot before this version,
-   add it again so it receives the new permission.
-2. Copy the SERVER KEY shown after authorizing into ChatVoice, click "Test connection".
-3. In Discord: Server Settings > Roles: drag the "ChatVoice" role ABOVE the roles it should give.
-4. ROLES FROM INVITE LINKS (recommended, no login page, nothing looks suspicious to viewers):
-   - In ChatVoice > Discord > Viewer invite roles, optionally choose a channel and click "Create role + invite" for
-     YouTube, Twitch and Kick. ChatVoice creates the matching viewer role and a never-expiring, unlimited invite.
-   - You can still paste an existing Discord invite and select an existing role manually, then use "Save invite rules".
-   - Put the YouTube invite in your video description / pinned comment. Whoever joins through it gets the YouTube role.
-   - Every 2 minutes the cloud sees which invite was used and gives the matching role.
-5. Optional chat-activity roles (Regular / Supporter) use the link page (viewers log in with Discord once).
+EACH STREAMER  (ChatVoice > Discord page)  -  NOTHING TO COPY, NO CLOUDFLARE LINK, NO KEY
+1. Press "Add ChatVoice bot to my server". The browser opens on Discord: choose the server, press Authorize.
+   ChatVoice connects by itself (the cloud address is built into the app, and the key comes back automatically).
+   The bot asks for: Manage Roles (to give roles), Create Invite (to make the links), View Channels, and Manage Server
+   (Discord requires it just to see how often each invite was used). If a server added the bot before this version,
+   press the button again so it gets the new permissions.
+2. Tick the platforms you stream on (YouTube / Twitch / Kick) and press "Create roles and invite links".
+   The bot makes a role ("YouTube Viewer"...) and a never-expiring invite for each. Roles it creates sit below its own role,
+   so no role-ordering is needed.
+3. Put each invite link where that audience sees it (the YouTube link in the video description and pinned comment).
+   Whoever joins through a link gets that role within about 2 minutes. Press "Check now" to see the links are working.
+Everything else (manual keys, your own invites, chat-activity roles, link page) is under "Show advanced options".
+
+THE PERSON WHO RUNS CHATVOICE (you) sets the cloud address once in app/config.py (CLOUD_URL) before building the installer.
+The Discord developer portal still needs the two redirect links from step D above, and "Server Members Intent" switched on.
 
 LIMITS OF INVITE ROLES (honest version)
 - It proves WHICH INVITE someone used, not that they really watch or subscribe on YouTube.

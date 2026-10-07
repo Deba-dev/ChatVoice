@@ -1,0 +1,28 @@
+MUSIC ON STREAM  -  no-copyright music, quieter while your chat is read aloud
+
+WHAT IT DOES
+Plays songs from a folder on your PC (mp3, wav, ogg, flac, m4a, aac, wma, opus), with play, pause, next, previous and shuffle.
+While ChatVoice reads a chat message aloud the music drops to a lower level (you choose how low), then comes back.
+A "now playing" box can appear on stream (OBS Browser source from the Music page).
+
+WHAT IT DOES NOT DO
+It does not download music, and it does not check licences. It plays only the files you give it. You decide what is allowed.
+
+WHERE TO GET MUSIC YOU CAN USE  (always open the licence of the track you pick)
+- Pixabay Music        free to use, credit usually not required
+- YouTube Audio Library  free tracks; some require credit
+- StreamBeats          music made for streamers
+- Incompetech          free, but you MUST credit the artist
+- Mixkit               free music under its own licence
+- Free Music Archive   many different licences, read each one
+Name files like  "Artist - Title.mp3"  so they show nicely on screen.
+
+STAY SAFE
+- "No copyright" tracks are sometimes flagged by mistake. Keep the licence page of every track you use.
+- Credit the artist whenever the licence asks. The now-playing box shows title and artist on screen.
+- Never play songs from Spotify, YouTube Music, radio or other artists without written permission: platforms can mute your
+  videos, remove clips or strike your channel.
+
+OBS AUDIO
+Music and the chat voice both play from ChatVoice, so OBS "Application Audio Capture" picks up both together.
+If you want separate faders, play music in an OBS Media Source instead and leave this page for the now-playing box only.

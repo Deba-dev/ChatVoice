@@ -216,3 +216,114 @@ def hrow(*widgets):
         stretch = 1 if x.__class__.__name__ in ("QLineEdit", "QComboBox", "QPlainTextEdit") else 0
         lay.addWidget(x, stretch)
     return w
+
+
+# ---------------------------------------------------------------- shared pieces for the newer pages
+from PySide6.QtGui import QGuiApplication          # noqa: E402
+from PySide6.QtWidgets import QLineEdit, QPushButton   # noqa: E402
+
+MARKS = {"youtube": ("YT", "#ff4d4d"), "twitch": ("TW", "#9146ff"), "kick": ("KK", "#53fc18")}
+
+
+def platform_mark(key, size=36):
+    letter, color = MARKS.get(key, ("\u2022", "#888888"))
+    mark = QLabel(letter)
+    mark.setAlignment(Qt.AlignCenter)
+    mark.setFixedSize(size, size)
+    mark.setStyleSheet("background:%s; color:#0b0b10; font-weight:700; font-size:12px; border-radius:10px;" % color)
+    return mark
+
+
+def make_badge(text="", kind="pill"):
+    """Status chip. kind: pill (idle) | pillOn (good) | pillWait (working) | pillBad (problem)."""
+    label = QLabel(text)
+    label.setObjectName(kind)
+    return label
+
+
+def set_badge(label, text, kind):
+    label.setText(text)
+    label.setObjectName(kind)
+    label.style().unpolish(label)
+    label.style().polish(label)
+
+
+def info_box(text, title=""):
+    box = QFrame()
+    box.setObjectName("infoBox")
+    lay = QVBoxLayout(box)
+    lay.setContentsMargins(14, 10, 14, 10)
+    lay.setSpacing(2)
+    if title:
+        head = QLabel(title)
+        head.setObjectName("settingName")
+        lay.addWidget(head)
+    body = QLabel(text)
+    body.setObjectName("settingNote")
+    body.setWordWrap(True)
+    body.setTextFormat(Qt.RichText)
+    body.setOpenExternalLinks(True)
+    lay.addWidget(body)
+    box.body = body
+    return box
+
+
+def copy_row(text="", placeholder="", button="Copy"):
+    """Read-only text with a Copy button. Returns (widget, line_edit)."""
+    edit = QLineEdit(text)
+    edit.setReadOnly(True)
+    edit.setPlaceholderText(placeholder)
+    btn = QPushButton(button)
+    btn.setObjectName("quiet")
+    btn.setCursor(Qt.PointingHandCursor)
+
+    def copy():
+        QGuiApplication.clipboard().setText(edit.text())
+        btn.setText("Copied")
+        from PySide6.QtCore import QTimer
+        QTimer.singleShot(1400, lambda: btn.setText(button))
+
+    btn.clicked.connect(copy)
+    edit.copy_button = btn
+    return hrow(edit, btn), edit
+
+
+def step_row(number, title, detail):
+    """A numbered instruction line: round number chip, bold title, softer detail text."""
+    row = QWidget()
+    lay = QHBoxLayout(row)
+    lay.setContentsMargins(0, 4, 0, 4)
+    lay.setSpacing(12)
+    chip = QLabel(str(number))
+    chip.setObjectName("stepNum")
+    chip.setAlignment(Qt.AlignCenter)
+    chip.setFixedSize(26, 26)
+    text = QVBoxLayout()
+    text.setSpacing(1)
+    head = QLabel(title)
+    head.setObjectName("settingName")
+    head.setWordWrap(True)
+    body = QLabel(detail)
+    body.setObjectName("settingNote")
+    body.setWordWrap(True)
+    body.setTextFormat(Qt.RichText)
+    text.addWidget(head)
+    text.addWidget(body)
+    lay.addWidget(chip, 0, Qt.AlignTop)
+    lay.addLayout(text, 1)
+    row.head, row.body = head, body
+    return row
+
+
+def status_row(badge, label=None):
+    """A compact badge on the left with optional text beside it (the badge keeps its natural size)."""
+    row = QWidget()
+    lay = QHBoxLayout(row)
+    lay.setContentsMargins(0, 0, 0, 0)
+    lay.setSpacing(10)
+    lay.addWidget(badge, 0, Qt.AlignLeft | Qt.AlignVCenter)
+    if label is not None:
+        lay.addWidget(label, 1)
+    else:
+        lay.addStretch(1)
+    return row

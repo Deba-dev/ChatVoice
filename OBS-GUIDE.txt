@@ -17,9 +17,21 @@ ChatVoice is a normal window. OBS uses it in three ways. Start ChatVoice BEFORE 
    Messages from YouTube, Twitch and Kick slide in with a coloured tag and fade away. Moderation applies: skipped
    messages never show.
 
+4. USE YOUR STREAM ELEMENTS OVERLAY INSTEAD
+   In ChatVoice > OBS overlays, paste your StreamElements overlay URL and copy it. In OBS, add a separate
+   Browser source and paste that URL. Set the width and height to match your StreamElements overlay.
+   This keeps the StreamElements overlay independent from ChatVoice's alert and chat sources; ChatVoice
+   does not import or host it. The saved URL is stored encrypted with the app's other protected settings.
+
 NOTES
 - The addresses only work on the PC that runs ChatVoice, and only while ChatVoice is open.
 - If port 8765 is busy, ChatVoice uses the next free one and shows the new addresses on the page: copy them again.
 - Leave "Shutdown source when not visible" and "Refresh browser when scene becomes active" unticked.
 - Hindi text works. The overlay uses the same Poppins font as the app.
 - Old alerts are never replayed when you reload the Browser source.
+
+4. NOW PLAYING (from the Music page)
+   ChatVoice > Music > copy the address ending in /music. OBS: Sources > + > Browser, Width 700, Height 160. It slides in with
+   the song title and artist, and hides when the music is paused. Showing the title also credits artists whose licence asks for it.
+   Music and the chat voice share ChatVoice's audio in OBS (Application Audio Capture). While the voice speaks, the music
+   is lowered automatically (Music page > Mix with your voice).
