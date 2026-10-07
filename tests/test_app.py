@@ -334,9 +334,9 @@ w.s.set("cloud_token", "KEY"); d.refresh_state()
 
 # ===== K. music =====
 print("--- K. music ---")
-import tempfile, shutil
+import tempfile, shutil, zipfile
 from PySide6.QtCore import QObject, Signal
-from app.music import MusicPlayer, describe, scan
+from app.music import MusicPlayer, describe, import_downloads, scan
 class FakeBackend(QObject):
     ended = Signal(); failed = Signal(str)
     def __init__(self): super().__init__(); self.vol = None; self.loaded = []; self.playing = False
@@ -349,6 +349,19 @@ folder = tempfile.mkdtemp(); [open(os.path.join(folder, n), "wb").write(b"x") fo
 os.makedirs(os.path.join(folder, "sub", "deep", "deeper")); open(os.path.join(folder, "sub", "deep", "deeper", "toodeep.mp3"), "wb").write(b"x")
 ok(describe("/m/Aria - First_Song.mp3") == ("Aria", "First Song") and describe("/m/third.wav") == ("", "third"), "file names become artist and title")
 ok([x["title"] for x in scan(folder)] == ["First Song", "Second", "third"], "only audio files are found, and not folders more than two levels deep")
+archive = os.path.join(folder, "official-album.zip")
+with zipfile.ZipFile(archive, "w") as z:
+    z.writestr("StreamBeats/Artist - Album Track.mp3", b"mp3 data")
+    z.writestr("../outside.mp3", b"unsafe path")
+    z.writestr("readme.txt", b"not audio")
+library = os.path.join(folder, "managed-music")
+added = import_downloads([archive, os.path.join(folder, "third.wav")], library)
+ok(len(added) == 2 and os.path.exists(os.path.join(library, "Artist - Album Track.mp3"))
+   and os.path.exists(os.path.join(library, "third.wav"))
+   and not os.path.exists(os.path.join(folder, "outside.mp3")),
+   "official album ZIP and local audio import into the app library without extracting unsafe paths")
+ok(len(import_downloads([archive], library)) == 1 and os.path.exists(os.path.join(library, "Artist - Album Track (1).mp3")),
+   "repeat music imports keep both copies instead of overwriting tracks")
 pushed = []; fb = FakeBackend(); s2 = _Settings(os.path.join(os.environ["APPDATA"], "music_settings.json")); s2.set("music_shuffle", False); s2.set("music_volume", 50)
 mp = MusicPlayer(s2, lambda k, d_: pushed.append((k, d_)), backend=fb); notes = []; mp.notice.connect(notes.append)
 ok(mp.load_folder(folder) == 3 and fb.vol == 0.5, "folder loaded, volume applied")

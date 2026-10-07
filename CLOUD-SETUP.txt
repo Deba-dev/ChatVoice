@@ -21,7 +21,17 @@ C. DEPLOY  (Command Prompt inside the "cloud" folder)
    npx wrangler d1 create chatvoice              -> paste the printed database_id into wrangler.toml (PASTE_D1_ID_HERE)
    npx wrangler deploy                           -> prints your address: https://chatvoice-cloud.YOURNAME.workers.dev
 
-D. REGISTER PLATFORM OAUTH APPS AND FINISH DISCORD
+D. PUBLIC APP PAGES FOR GOOGLE OAUTH
+   The Worker serves the ChatVoice home page, privacy policy, and terms of service at:
+       https://chatvoice-cloud.YOURNAME.workers.dev/
+       https://chatvoice-cloud.YOURNAME.workers.dev/privacy
+       https://chatvoice-cloud.YOURNAME.workers.dev/terms
+   Enter these as the app homepage, privacy policy, and terms links in Google Auth Platform > Branding.
+   For public OAuth verification, Google may require domains used by the app to be verified in Search Console.
+   A workers.dev hostname is shared infrastructure and is not a domain you own; if Google requires domain ownership,
+   connect a domain you control to this Worker and use that domain for the public links and OAuth callback URLs.
+
+E. REGISTER PLATFORM OAUTH APPS AND FINISH DISCORD
    Optional, but required to sign in and send chat messages/create polls:
    1. Google Cloud Console > APIs & Services: enable YouTube Data API v3. Create an OAuth client of type "Web application".
       Prefer a separate Google Cloud project from the hosted moderation bot so their daily quotas are isolated.
@@ -38,7 +48,7 @@ D. REGISTER PLATFORM OAUTH APPS AND FINISH DISCORD
         https://chatvoice-cloud.YOURNAME.workers.dev/link/callback
       Save changes in each provider console.
 
-E. GIVE THE CLOUD ITS SECRETS  (each command asks you to paste the value)
+F. GIVE THE CLOUD ITS SECRETS  (each command asks you to paste the value)
    npx wrangler secret put DISCORD_CLIENT_ID
    npx wrangler secret put DISCORD_CLIENT_SECRET
    npx wrangler secret put DISCORD_BOT_TOKEN

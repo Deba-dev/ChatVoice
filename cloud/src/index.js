@@ -2,6 +2,7 @@
 // It never touches money. It only: (1) installs the bot, (2) links viewers to Discord accounts,
 // (3) gives roles when the desktop app reports activity.
 import { handlePlatformAuth } from "./platform-auth.js";
+import { handlePublicPage } from "./legal-pages.js";
 
 const API = "https://discord.com/api/v10";
 const PLATFORMS = ["youtube", "twitch", "kick"];
@@ -626,11 +627,12 @@ async function api(request, env, url) {
 
 async function route(request, env, url) {
   const origin = url.origin, p = url.pathname;
+  const publicPage = handlePublicPage(request, url);
+  if (publicPage) return publicPage;
   if (p.startsWith("/platform-auth/")) {
     const result = await handlePlatformAuth(request, env, url);
     if (result) return result;
   }
-  if (p === "/") return page("ChatVoice cloud", "<p>This server links Discord roles for ChatVoice streamers. Nothing to see here.</p>");
   if (p === "/health") return health(env);
   const missing = missingConfig(env);
   if (missing.length)

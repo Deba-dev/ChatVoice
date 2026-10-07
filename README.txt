@@ -17,7 +17,7 @@ WHAT IS INSIDE
   GITHUB-BUILD-GUIDE.txt  turn the project into ChatVoice-Setup.exe, free
   UPDATING.txt            publish a new version; users update with one click
   OBS-GUIDE.txt           voice, alerts, chat and now-playing in OBS
-  MUSIC-GUIDE.txt         the no-copyright music player and where to get music
+  MUSIC-GUIDE.txt         StreamBeats downloads/imports, licenses and OBS music setup
 
 PAGES IN THE APP
   Connect     paste your YouTube link and channel names, press Connect; optional YouTube/Twitch login enables chat messages and polls
@@ -28,7 +28,7 @@ PAGES IN THE APP
   Payments    payment alerts read aloud (Razorpay / Stripe / Cashfree / any tool)
   YouTube mod add the ChatVoice bot to your channel, verify it is yours, choose the rules (like Nightbot)
   OBS overlays  alert, chat and now-playing sources, or use your StreamElements overlay URL in OBS
-  Music       play no-copyright music (your own files), quieter while chat is read, now playing on stream
+  Music       browse/download StreamBeats music, import album ZIPs or local files, play with OBS now-playing
   Sidebar     Theme (4 colour themes) and Lite mode (turns off glow/fade animations for weak PCs or gaming)
 
 RUN IT (easiest)

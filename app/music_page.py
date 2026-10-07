@@ -3,8 +3,10 @@ import os
 
 from PySide6.QtCore import Qt, QUrl
 from PySide6.QtGui import QDesktopServices
-from PySide6.QtWidgets import QFileDialog, QLabel, QListWidget, QPushButton, QSlider, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QFileDialog, QLabel, QListWidget, QMessageBox, QPushButton, QSlider, QVBoxLayout, QWidget
 
+from .music import import_downloads
+from .settings import data_dir
 from .theme import DEFAULT_THEME, THEMES
 from .ui_kit import (FormScrollArea, bind_switch, copy_row, field_row, hrow, info_box, make_badge, meter_row,
                      option_switch_row, section_card, set_badge, status_row)
@@ -45,7 +47,34 @@ class MusicPage(FormScrollArea):
         cl.addWidget(option_switch_row("Start music when ChatVoice opens", "Starts the first song automatically.", bind_switch(self.s, "music_autoplay", accent)))
         lay.addWidget(c)
 
-        # ---------- library ----------
+        # ---------- StreamBeats download library ----------
+        c, cl = section_card(
+            "Get StreamBeats music",
+            "Browse and download music from the official StreamBeats catalog, then import the downloaded tracks or album ZIP here.",
+        )
+        cl.addWidget(info_box(
+            "StreamBeats offers a free creator license for synchronizing its tracks with Twitch and YouTube videos. "
+            "ChatVoice does not bundle or redistribute the music: download it from StreamBeats/Bandcamp yourself, then import it here. "
+            "A license does not guarantee that automated copyright systems will never flag a stream; keep the official license page as proof.",
+            "License and claims",
+        ))
+        browse = QPushButton("Browse StreamBeats catalog")
+        browse.setObjectName("primary")
+        browse.setCursor(Qt.PointingHandCursor)
+        browse.clicked.connect(lambda: QDesktopServices.openUrl(QUrl("https://www.streambeats.com/")))
+        downloads = QPushButton("Download free music")
+        downloads.clicked.connect(lambda: QDesktopServices.openUrl(QUrl("https://streambeats.bandcamp.com/")))
+        licensing = QPushButton("View usage license")
+        licensing.clicked.connect(lambda: QDesktopServices.openUrl(QUrl("https://www.streambeats.com/licensing")))
+        self.import_btn = QPushButton("Import downloaded tracks / album ZIP")
+        self.import_btn.clicked.connect(self.import_files)
+        self.import_status = QLabel("")
+        self.import_status.setObjectName("sub")
+        cl.addWidget(hrow(browse, downloads, licensing))
+        cl.addWidget(hrow(self.import_btn, self.import_status))
+        lay.addWidget(c)
+
+        # ---------- local library ----------
         c, cl = section_card("Your music", "Choose a folder with songs you are allowed to use. Name files like \"Artist - Title.mp3\" to show them nicely.")
         self.folder = QLabel(self.s.get("music_folder") or "No folder chosen")
         self.folder.setObjectName("settingNote")
@@ -92,24 +121,42 @@ class MusicPage(FormScrollArea):
         lay.addWidget(c)
 
         # ---------- finding music ----------
-        c, cl = section_card("Find free, no-copyright music", "These sites offer music made for creators. Always open the licence of the track you pick.")
+        c, cl = section_card("Other music sources", "Licenses vary by track and provider; check the permissions for your platform and keep proof.")
         cl.addWidget(info_box(
-            "\u2022 <a href='https://pixabay.com/music/'>Pixabay Music</a> \u2014 free to use, credit usually not required<br>"
-            "\u2022 <a href='https://www.youtube.com/audiolibrary'>YouTube Audio Library</a> \u2014 free tracks, some need credit<br>"
-            "\u2022 <a href='https://www.streambeats.com/'>StreamBeats</a> \u2014 music made for streamers<br>"
-            "\u2022 <a href='https://incompetech.com/music/royalty-free/'>Incompetech</a> \u2014 free, but you must credit the artist<br>"
-            "\u2022 <a href='https://mixkit.co/free-stock-music/'>Mixkit</a> \u2014 free music with its own licence<br>"
-            "\u2022 <a href='https://freemusicarchive.org/'>Free Music Archive</a> \u2014 many different licences, read each one",
-            "Where to find it"))
+            "\u2022 <a href='https://www.youtube.com/audiolibrary'>YouTube Audio Library</a> \u2014 YouTube states its Audio Library tracks are copyright-safe on YouTube; this does not establish Twitch rights.<br>"
+            "\u2022 <a href='https://incompetech.com/music/royalty-free/'>Incompetech</a> \u2014 check the individual license and provide required credit.<br>"
+            "\u2022 <a href='https://mixkit.co/free-stock-music/'>Mixkit</a> and <a href='https://freemusicarchive.org/'>Free Music Archive</a> \u2014 review the exact track license before streaming.",
+            "Read each license"))
         cl.addWidget(info_box(
-            "\"No copyright\" does not always mean \"no claims\": tracks are sometimes flagged by mistake. Keep the licence page of every track you "
-            "use, credit the artist when the licence says so, and never play songs from Spotify, YouTube Music or other artists unless you have "
-            "written permission. ChatVoice only plays the files you give it and does not check licences.", "Stay safe"))
+            "No service can guarantee that a copyright-claim system will never make a mistake. Use the provider's authorized download, "
+            "follow its license, and keep a copy of the permission and download details. Do not redistribute music files from ChatVoice.",
+            "Stay safe"))
         lay.addWidget(c)
         lay.addStretch(1)
 
         player.changed.connect(self.refresh)
         self.refresh(reload_list=True)
+
+    def import_files(self):
+        paths, _ = QFileDialog.getOpenFileNames(
+            self, "Import StreamBeats downloads", os.path.expanduser("~/Downloads"),
+            "Audio files and album ZIPs (*.mp3 *.wav *.ogg *.flac *.m4a *.aac *.wma *.opus *.zip)",
+        )
+        if not paths:
+            return
+        folder = os.path.join(data_dir(), "Music")
+        try:
+            imported = import_downloads(paths, folder)
+        except (OSError, ValueError) as error:
+            QMessageBox.warning(self, "Music import failed", str(error))
+            self.import_status.setText("Import failed")
+            return
+        if not imported:
+            QMessageBox.information(self, "No supported tracks", "The selected download did not contain supported audio files.")
+            return
+        count = self.player.load_folder(folder)
+        self.import_status.setText("Imported %d tracks" % len(imported))
+        self.count.setText("%d songs in your library" % count)
 
     def choose_folder(self):
         folder = QFileDialog.getExistingDirectory(self, "Choose your music folder", self.s.get("music_folder") or os.path.expanduser("~"))

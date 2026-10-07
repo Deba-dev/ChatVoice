@@ -1,27 +1,40 @@
-MUSIC ON STREAM  -  no-copyright music, quieter while your chat is read aloud
+MUSIC ON STREAM  -  licensed music, quieter while your chat is read aloud
 
 WHAT IT DOES
 Plays songs from a folder on your PC (mp3, wav, ogg, flac, m4a, aac, wma, opus), with play, pause, next, previous and shuffle.
 While ChatVoice reads a chat message aloud the music drops to a lower level (you choose how low), then comes back.
 A "now playing" box can appear on stream (OBS Browser source from the Music page).
 
-WHAT IT DOES NOT DO
-It does not download music, and it does not check licences. It plays only the files you give it. You decide what is allowed.
+STREAMBEATS DOWNLOADS IN CHATVOICE
+1. On the Music page, choose "Browse StreamBeats catalog" or "Download free music". These open the official
+   StreamBeats website and its official Bandcamp download page in your browser.
+2. Complete the free download on Bandcamp. ChatVoice does not scrape, bundle or redistribute their catalog.
+3. Back in ChatVoice, choose "Import downloaded tracks / album ZIP" and select the downloaded ZIP or audio files.
+   Imported tracks are copied into %APPDATA%\ChatVoice\Music and added to the playlist. ZIP imports only copy supported
+   audio formats; unsafe archive paths are ignored.
+4. Double-click a track to play it. You can also keep using any local music folder.
 
-WHERE TO GET MUSIC YOU CAN USE  (always open the licence of the track you pick)
-- Pixabay Music        free to use, credit usually not required
-- YouTube Audio Library  free tracks; some require credit
-- StreamBeats          music made for streamers
-- Incompetech          free, but you MUST credit the artist
-- Mixkit               free music under its own licence
-- Free Music Archive   many different licences, read each one
-Name files like  "Artist - Title.mp3"  so they show nicely on screen.
+STREAMBEATS LICENSE
+StreamBeats' published license says its tracks may be synchronized with Twitch and YouTube videos, worldwide,
+royalty-free, perpetual, and without required attribution. Read the current terms before use:
+https://www.streambeats.com/licensing
+The license permits stream use but cannot guarantee that an automated copyright/DMCA system will never mistakenly
+flag a stream. Keep the official license page and your download details as evidence if a claim needs a dispute.
+
+WHAT IT DOES NOT DO
+It does not bundle or redistribute provider music. The download is completed from the provider; ChatVoice imports your
+own downloaded tracks and does not independently verify their license.
+
+WHERE TO GET OTHER MUSIC (read each exact license)
+- YouTube Audio Library  YouTube describes its tracks as copyright-safe on YouTube; that does not prove Twitch rights
+- Incompetech            free tracks may require artist credit
+- Mixkit / Free Music Archive  individual terms vary; check permission for each platform
+Name files like "Artist - Title.mp3" so they show nicely on screen.
 
 STAY SAFE
-- "No copyright" tracks are sometimes flagged by mistake. Keep the licence page of every track you use.
-- Credit the artist whenever the licence asks. The now-playing box shows title and artist on screen.
-- Never play songs from Spotify, YouTube Music, radio or other artists without written permission: platforms can mute your
-  videos, remove clips or strike your channel.
+- "No copyright" does not mean a claim can never happen. Keep the license page and download proof for every track.
+- Credit the artist whenever the license asks. The now-playing box shows title and artist on screen.
+- Never play songs from Spotify, YouTube Music, radio or other artists unless you have written permission.
 
 OBS AUDIO
 Music and the chat voice both play from ChatVoice, so OBS "Application Audio Capture" picks up both together.

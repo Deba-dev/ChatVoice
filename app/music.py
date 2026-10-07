@@ -3,11 +3,18 @@ and lowers itself while ChatVoice is reading a chat message aloud."""
 import os
 import random
 import re
+import shutil
+import stat
+import zipfile
+from pathlib import PurePosixPath
 
 from PySide6.QtCore import QObject, QUrl, Signal
+
 from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
 
 AUDIO_EXT = (".mp3", ".wav", ".ogg", ".flac", ".m4a", ".aac", ".wma", ".opus")
+MAX_IMPORT_BYTES = 512 * 1024 * 1024
+MAX_ARCHIVE_FILES = 5000
 
 
 def describe(path):
@@ -35,6 +42,79 @@ def scan(folder, limit=1500):
                 if len(out) >= limit:
                     return out
     return out
+
+
+def import_downloads(paths, folder):
+    """Copy supported tracks and safely import audio files from official album ZIP downloads."""
+    os.makedirs(folder, exist_ok=True)
+    imported = []
+    total_size = 0
+
+    def destination(name):
+        base, ext = os.path.splitext(os.path.basename(name))
+        target = os.path.join(folder, os.path.basename(name))
+        suffix = 1
+        while os.path.exists(target):
+            target = os.path.join(folder, "%s (%d)%s" % (base, suffix, ext))
+            suffix += 1
+        return target
+
+    def copy_file(source, name, expected_size=None):
+        nonlocal total_size
+        size = os.path.getsize(source) if expected_size is None else expected_size
+        if size <= 0 or total_size + size > MAX_IMPORT_BYTES:
+            raise ValueError("Music imports are limited to 512 MB at a time")
+        target = destination(name)
+        temporary = target + ".importing"
+        try:
+            shutil.copyfile(source, temporary)
+            if os.path.getsize(temporary) != size:
+                raise OSError("The imported audio file changed while it was being copied")
+            os.replace(temporary, target)
+        finally:
+            if os.path.exists(temporary):
+                os.remove(temporary)
+        total_size += size
+        imported.append(target)
+
+    for source in paths:
+        if not os.path.isfile(source):
+            continue
+        if source.lower().endswith(AUDIO_EXT):
+            copy_file(source, os.path.basename(source))
+            continue
+        if not zipfile.is_zipfile(source):
+            continue
+        try:
+            with zipfile.ZipFile(source) as archive:
+                entries = archive.infolist()
+                if len(entries) > MAX_ARCHIVE_FILES:
+                    raise ValueError("The album archive contains too many files")
+                for entry in entries:
+                    path = PurePosixPath(entry.filename.replace("\\", "/"))
+                    mode = entry.external_attr >> 16
+                    if (entry.is_dir() or path.is_absolute() or ".." in path.parts or
+                            stat.S_ISLNK(mode) or not path.name.lower().endswith(AUDIO_EXT)):
+                        continue
+                    size = entry.file_size
+                    if size <= 0 or total_size + size > MAX_IMPORT_BYTES:
+                        raise ValueError("Music imports are limited to 512 MB at a time")
+                    target = destination(path.name)
+                    temporary = target + ".importing"
+                    try:
+                        with archive.open(entry) as src, open(temporary, "wb") as dst:
+                            shutil.copyfileobj(src, dst)
+                        if os.path.getsize(temporary) != size:
+                            raise OSError("The album archive contains an incomplete audio file")
+                        os.replace(temporary, target)
+                    finally:
+                        if os.path.exists(temporary):
+                            os.remove(temporary)
+                    total_size += size
+                    imported.append(target)
+        except (OSError, zipfile.BadZipFile, RuntimeError, NotImplementedError) as error:
+            raise ValueError("Could not import %s: %s" % (os.path.basename(source), error)) from error
+    return imported
 
 
 class QtBackend(QObject):
