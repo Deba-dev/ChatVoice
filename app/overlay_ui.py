@@ -110,7 +110,8 @@ class OverlayPage(FormScrollArea):
         copy_external.setObjectName("quiet")
         copy_external.clicked.connect(self.copy_external_url)
         open_se = QPushButton("Open StreamElements")
-        open_se.clicked.connect(lambda: QDesktopServices.openUrl(QUrl("https://streamelements.com/overlay")))
+        open_se.setToolTip("Opens the StreamElements overlay dashboard in your browser.")
+        open_se.clicked.connect(lambda: QDesktopServices.openUrl(QUrl("https://streamelements.com/dashboard/overlays")))
         cl.addWidget(hrow(self.external_url, copy_external))
         cl.addWidget(hrow(open_se))
         cl.addWidget(info_box("Use ChatVoice's own alerts for payments and Super Chats, and your StreamElements overlay for its own follower, "

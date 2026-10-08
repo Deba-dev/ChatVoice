@@ -25,6 +25,7 @@ ChatVoice is a normal window. OBS uses it in three ways. Start ChatVoice BEFORE 
 4. USE YOUR STREAM ELEMENTS OVERLAY INSTEAD
    In ChatVoice > OBS overlays, paste your StreamElements overlay URL and copy it. In OBS, add a separate
    Browser source and paste that URL. Set the width and height to match your StreamElements overlay.
+   Use "Open StreamElements" to go directly to the overlay dashboard; sign in there if asked.
    This keeps the StreamElements overlay independent from ChatVoice's alert and chat sources; ChatVoice
    does not import or host it. The saved URL is stored encrypted with the app's other protected settings.
 

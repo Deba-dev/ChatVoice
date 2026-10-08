@@ -84,10 +84,30 @@ for H, port in ((Cloud, 8811), (Bot, 8812)):
 import app.ytmod as ytmod
 from app.ui import MainWindow
 from app.models import Message
+from app.music_page import _CatalogPage
+from PySide6.QtCore import QUrl
+from PySide6.QtWebEngineCore import QWebEnginePage, QWebEngineProfile
+from PySide6.QtGui import QDesktopServices
 w = MainWindow(); w.show()
 w.s.set("muted", True)
 spoken = []; w.speaker.say = lambda *a: spoken.append(a)
 w.mod.blocked = []
+profile = QWebEngineProfile()
+catalog_page = _CatalogPage(profile)
+opened_external = []
+old_open_url = QDesktopServices.openUrl
+QDesktopServices.openUrl = lambda url: opened_external.append(url.toString()) or True
+blocked_hosts = []
+catalog_page.navigationBlocked.connect(blocked_hosts.append)
+catalog_page.acceptNavigationRequest(QUrl("https://www.streambeats.com/catalog"), QWebEnginePage.NavigationType.NavigationTypeLinkClicked, True)
+catalog_page.acceptNavigationRequest(QUrl("https://www.facebook.com/"), QWebEnginePage.NavigationType.NavigationTypeRedirect, True)
+ok(not opened_external and blocked_hosts == ["www.facebook.com"]
+   and catalog_page.acceptNavigationRequest(QUrl("https://mixkit.co/free-sound-effects/"), QWebEnginePage.NavigationType.NavigationTypeLinkClicked, True),
+   "catalog allows supported sites and blocks automatic redirects without opening unwanted tabs")
+catalog_page.acceptNavigationRequest(QUrl("https://streamelements.com/overlay"), QWebEnginePage.NavigationType.NavigationTypeLinkClicked, True)
+QDesktopServices.openUrl = old_open_url
+ok(opened_external == ["https://streamelements.com/overlay"],
+   "a deliberately clicked external catalog link opens once in the regular browser")
 bot_msg = Message("youtube", "ViewerHelper", "hello viewers", bot=True)
 ok(w.mod.check(bot_msg)[1] == "bot", "provider-marked bot messages are skipped even if they are not in the name list")
 known_bot = Message("youtube", "Nightbot", "welcome", "super", "100 bits")

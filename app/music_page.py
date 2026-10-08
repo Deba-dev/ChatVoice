@@ -1,7 +1,7 @@
 """Music page: play your own no-copyright / licensed music on stream, with a now-playing overlay for OBS."""
 import os
 
-from PySide6.QtCore import Qt, QUrl
+from PySide6.QtCore import Qt, QUrl, Signal
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
 from PySide6.QtWebEngineCore import QWebEngineDownloadRequest, QWebEnginePage, QWebEngineProfile
@@ -18,13 +18,17 @@ from .ui_kit import (FormScrollArea, bind_switch, copy_row, field_row, hrow, inf
 
 class _CatalogPage(QWebEnginePage):
     ALLOWED_HOSTS = ("streambeats.com", "bandcamp.com", "mixkit.co")
+    navigationBlocked = Signal(str)
 
     def acceptNavigationRequest(self, url, navigation_type, is_main_frame):
         host = url.host().lower()
         if url.scheme() == "https" and any(host == domain or host.endswith("." + domain) for domain in self.ALLOWED_HOSTS):
             return True
         if url.scheme() in ("http", "https"):
-            QDesktopServices.openUrl(url)
+            if navigation_type == QWebEnginePage.NavigationType.NavigationTypeLinkClicked:
+                QDesktopServices.openUrl(url)
+            else:
+                self.navigationBlocked.emit(host or url.scheme())
         return False
 
     def createWindow(self, window_type):
@@ -44,7 +48,9 @@ class _MusicCatalogDialog(QDialog):
         self.browser = QWebEngineView(self)
         self.profile = QWebEngineProfile(self)
         self.profile.downloadRequested.connect(self._download_requested)
-        self.browser.setPage(_CatalogPage(self.profile, self.browser))
+        page = _CatalogPage(self.profile, self.browser)
+        page.navigationBlocked.connect(self._navigation_blocked)
+        self.browser.setPage(page)
         self.browser.setUrl(QUrl(url))
         layout.addWidget(self.browser, 1)
         buttons = QHBoxLayout()
@@ -62,6 +68,10 @@ class _MusicCatalogDialog(QDialog):
         buttons.addStretch(1)
         buttons.addWidget(close)
         layout.addLayout(buttons)
+
+    def _navigation_blocked(self, url):
+        self.status.setText("Blocked an automatic external redirect to %s. External links open only when you choose them."
+                            % url)
 
     def _download_requested(self, request):
         folder = os.path.join(data_dir(), "MusicDownloads")

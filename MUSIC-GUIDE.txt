@@ -10,6 +10,8 @@ as the OBS alert notification sound from the OBS overlays page.
 STREAMBEATS DOWNLOADS IN CHATVOICE
 1. Choose "Browse StreamBeats catalog" to browse the official catalog inside ChatVoice. Preview tracks on the site and
    download eligible audio/album ZIPs; supported downloads are imported into the ChatVoice music library automatically.
+   The embedded browser blocks automatic redirects away from the supported catalog sites to prevent unwanted tabs;
+   a link you deliberately click to another site opens in your regular browser.
 2. The "Download free music" button remains available to open StreamBeats' official Bandcamp page in your browser.
    You can manually import those downloads with "Import downloaded tracks / album ZIP".
 3. Imported tracks are copied into %APPDATA%\ChatVoice\Music and added to the playlist. ZIP imports only copy supported
