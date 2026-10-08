@@ -9,6 +9,7 @@ from PySide6.QtWidgets import (QComboBox, QHBoxLayout, QLabel, QLineEdit, QPlain
 
 from .discord import post_live_announcement, post_webhook, run_bg
 from .oauth_local import Loopback
+from .platforms import youtube_id
 from .theme import DEFAULT_THEME, THEMES
 from .ui_kit import (FormScrollArea, Switch, bind_switch, copy_row, field_row, hrow, info_box, make_badge,
                      option_switch_row, platform_mark, section_card, set_badge, status_row)
@@ -27,7 +28,8 @@ class DiscordPage(FormScrollArea):
     def __init__(self, settings, cloud, bridge, links):
         super().__init__()
         self.s, self.cloud, self.bridge, self.links = settings, cloud, bridge, links
-        self._announced = False
+        self._announced_video = ""
+        self._pending_auto_video = ""
         self.role_names = {}
         self.loop = None
         inner = QWidget()
@@ -355,9 +357,11 @@ class DiscordPage(FormScrollArea):
         self.istatus.setText("Checking...")
         run_bg(self.bridge, "ui:invcheck", lambda: self.cloud.call("POST", "/api/invites/check", {}))
 
-    def announce_now(self):
+    def announce_now(self, youtube_link=None):
         self.s.set("webhook_url", self.hook.text().strip())
-        self.s.set("youtube", self.yt.text().strip())
+        link = (youtube_link if youtube_link is not None else self.yt.text()).strip()
+        self.yt.setText(link)
+        self.s.set("youtube", link)
         self.s.set("announce_title", self.title.text())
         self.s.set("announce_text", self.text.toPlainText())
         self.hstatus.setText("Sending...")
@@ -365,16 +369,27 @@ class DiscordPage(FormScrollArea):
                                self.s.get("youtube"), self.s.get("announce_title"))
         run_bg(self.bridge, "ui:hook", lambda: post_live_announcement(url, txt, yt, title))
 
-    def auto_announce(self, platform=None):
+    def auto_announce(self, platform=None, youtube_link=None):
         if platform and platform != "youtube":
             return
-        yt = self.s.get("youtube") or ""
-        if self.s.get("announce_auto") and self.s.get("webhook_url") and yt and not self._announced:
-            self._announced = True
-            self.announce_now()
+        if not self.s.get("announce_auto"):
+            return
+        yt = (youtube_link or self.s.get("youtube") or "").strip()
+        video_id = youtube_id(yt) if yt else None
+        if not video_id:
+            self.hstatus.setText("Automatic announcement needs the YouTube live video link or 11-character video ID from Connect.")
+            return
+        if not self.s.get("webhook_url"):
+            self.hstatus.setText("Add a Discord webhook URL to enable automatic announcements.")
+            return
+        if video_id in (self._announced_video, self._pending_auto_video):
+            return
+        self._pending_auto_video = video_id
+        self.announce_now(yt)
 
     def reset_announce(self):
-        self._announced = False
+        self._announced_video = ""
+        self._pending_auto_video = ""
 
     def post_paid(self, m):
         if self.s.get("post_super") and self.s.get("webhook_url"):
@@ -471,4 +486,11 @@ class DiscordPage(FormScrollArea):
                 lines.append("Gave roles to %d new member(s)." % len(res["assigned"]))
             self.istatus.setText("\n".join(lines) or "Nothing new")
         elif tag == "ui:hook":
-            self.hstatus.setText(err or "Sent")
+            err = err or res.get("error")
+            if self._pending_auto_video:
+                if err:
+                    self._pending_auto_video = ""
+                else:
+                    self._announced_video = self._pending_auto_video
+                    self._pending_auto_video = ""
+            self.hstatus.setText("Announcement failed: " + err if err else "Announcement sent to Discord.")

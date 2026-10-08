@@ -38,7 +38,10 @@ def _http(method, url, headers, body=None):
             return json.loads(raw) if raw else {"ok": True}
     except urllib.error.HTTPError as e:
         try:
-            return json.loads(e.read())
+            payload = json.loads(e.read())
+            if isinstance(payload, dict):
+                return {"error": payload.get("message") or payload.get("error") or "HTTP %d" % e.code}
+            return {"error": "HTTP %d" % e.code}
         except Exception:
             return {"error": "HTTP %d" % e.code}
     except Exception as e:

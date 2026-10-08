@@ -1429,7 +1429,9 @@ class MainWindow(QWidget):
         (self.connected.add if ok else self.connected.discard)(platform)
         self._sync_summary()
         if ok:
-            self.discord.auto_announce(platform)
+            self.discord.auto_announce(platform, card.edit.text().strip() if platform == "youtube" else None)
+        elif platform == "youtube" and text == "Disconnected":
+            self.discord.reset_announce()
         elif not self.connected:
             self.discord.reset_announce()
         if platform == "youtube":

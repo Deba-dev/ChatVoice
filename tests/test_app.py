@@ -120,6 +120,32 @@ discord_module._http = old_http
 ok(announcement["body"]["embeds"][0]["thumbnail"]["url"] == "https://i.ytimg.com/vi/abcdefghijk/hqdefault.jpg"
    and announcement["body"]["embeds"][0]["description"] == "Come watch https://www.youtube.com/watch?v=abcdefghijk",
    "Discord announcements include a YouTube thumbnail and expand custom link placeholders")
+from app import discord_page as discord_page_module
+old_run_bg, old_post_announcement = discord_page_module.run_bg, discord_page_module.post_live_announcement
+announcement_calls = []
+discord_page_module.run_bg = lambda bridge, tag, fn: announcement_calls.append((tag, fn()))
+discord_page_module.post_live_announcement = lambda *args: {"ok": True}
+w.discord.reset_announce()
+w.discord.hook.setText("https://discord.com/api/webhooks/1/token")
+w.s.set("webhook_url", "https://discord.com/api/webhooks/1/token")
+w.s.set("announce_auto", True)
+w.discord.yt.setText("")
+w.discord.auto_announce("youtube", "https://www.youtube.com/live/abcdefghijk")
+w.discord.on_done(*announcement_calls[-1])
+w.discord.auto_announce("youtube", "https://www.youtube.com/live/abcdefghijk")
+ok(len(announcement_calls) == 1 and announcement_calls[0][0] == "ui:hook"
+   and w.s.get("youtube") == "https://www.youtube.com/live/abcdefghijk"
+   and w.discord._announced_video == "abcdefghijk",
+   "automatic Discord announcement uses the connected YouTube live URL once")
+discord_page_module.post_live_announcement = lambda *args: {"error": "Discord webhook unavailable"}
+w.discord.reset_announce()
+w.discord.auto_announce("youtube", "https://www.youtube.com/watch?v=abcdefghijk")
+w.discord.on_done(*announcement_calls[-1])
+w.discord.auto_announce("youtube", "https://www.youtube.com/watch?v=abcdefghijk")
+ok(len(announcement_calls) == 3 and bool(w.discord._pending_auto_video),
+   "failed automatic announcement can retry on the next YouTube connection")
+discord_page_module.run_bg, discord_page_module.post_live_announcement = old_run_bg, old_post_announcement
+w.discord.reset_announce()
 w.s.set("cloud_url", "http://127.0.0.1:8811"); w.s.set("cloud_token", "KEY")
 w.links.refresh(); wait(500)
 ok(w.links.linked == {"youtube:UC1", "youtube:UC2"}, "linked viewers loaded from the cloud")
