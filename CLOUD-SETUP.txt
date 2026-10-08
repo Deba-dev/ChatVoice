@@ -4,7 +4,7 @@ Free service setup; Google consent verification can take longer. Your friends ne
 WHAT IT IS
 A free server on Cloudflare. It adds the bot to a Discord server, gives roles when people join through
 your invite links, receives payment confirmations from the streamer's own gateway, and securely brokers
-YouTube/Twitch sign-in for chat actions. Provider tokens are encrypted in D1; the cloud never holds money.
+YouTube/Twitch sign-in for chat actions and platform alert subscriptions. Provider tokens are encrypted in D1; the cloud never holds money.
 
 A. ACCOUNTS AND TOOLS
 1. Free Cloudflare account (cloudflare.com). 2. Node.js LTS (nodejs.org).
@@ -32,7 +32,7 @@ D. PUBLIC APP PAGES FOR GOOGLE OAUTH
    connect a domain you control to this Worker and use that domain for the public links and OAuth callback URLs.
 
 E. REGISTER PLATFORM OAUTH APPS AND FINISH DISCORD
-   Optional, but required to sign in and send chat messages/create polls:
+   Optional, but required to sign in for chat actions and authenticated platform alerts:
    1. Google Cloud Console > APIs & Services: enable YouTube Data API v3. Create an OAuth client of type "Web application".
       Prefer a separate Google Cloud project from the hosted moderation bot so their daily quotas are isolated.
       Add this authorized redirect URI:
@@ -82,10 +82,14 @@ Everything else (manual keys, your own invites, chat-activity roles, link page) 
 
 EACH STREAMER  (ChatVoice > Connect page)
 1. Paste a YouTube live URL or Twitch channel and press Connect to read chat. Reading still works without signing in.
-2. To send chat messages or create polls, press Login on that platform card and approve the requested permissions in your
-   browser. The connected account name appears in ChatVoice. Select YouTube or Twitch in Live chat to send a message or
-   create a poll. YouTube actions only work for an active stream owned by the signed-in YouTube channel.
-3. Disconnect the account from its platform card to revoke ChatVoice's provider grant and remove its cloud session. The app
+2. Press Login on the YouTube or Twitch card and approve the requested permissions in your browser. The connected account
+   name appears in ChatVoice. YouTube membership alerts come from live chat; YouTube new-subscriber alerts poll the API
+   every five minutes and can only show subscribers whose subscriptions are public.
+3. Twitch login enables follower, subscription/resubscription, gift, and raid alerts through EventSub. If you signed in
+   before alert permissions were added, disconnect that Twitch account and log in again to grant the new scopes.
+   Select YouTube or Twitch in Live chat to send a message or create a poll. YouTube actions only work for an active
+   stream owned by the signed-in YouTube channel.
+4. Disconnect the account from its platform card to revoke ChatVoice's provider grant and remove its cloud session. The app
    encrypts its session handle using Windows DPAPI; provider tokens are encrypted in the cloud's D1 database.
 Kick remains read-only because this version has no supported Kick integration.
 

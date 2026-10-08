@@ -39,6 +39,7 @@ def _request(url, method="GET", body=None, token=""):
 class PlatformAuth(QObject):
     changed = Signal(str)
     notice = Signal(str)
+    subscribers = Signal(object)
 
     SUPPORTED = ("youtube", "twitch")
 
@@ -126,6 +127,23 @@ class PlatformAuth(QObject):
             "videoId": youtube_id(self.s.get("youtube") or "") if platform == "youtube" else "",
         })
 
+    def subscribe_eventsub(self, session_id):
+        token = self.s.get(self._session_key("twitch"))
+        if not token:
+            return {"error": "Sign in to Twitch before starting alert subscriptions."}
+        if not self._base():
+            return {"error": "Twitch alert subscriptions require an HTTPS ChatVoice cloud address."}
+        return _request(self._base() + "/platform-auth/eventsub", "POST", {"sessionId": session_id}, token)
+
+    def poll_youtube_subscribers(self, since):
+        token = self.s.get(self._session_key("youtube"))
+        if not token:
+            return {"error": "Sign in to YouTube before checking subscriber alerts."}
+        if not self._base():
+            return {"error": "YouTube subscriber alerts require an HTTPS ChatVoice cloud address."}
+        run_bg(self.bridge, "platform:youtube-subscribers",
+               lambda: _request(self._base() + "/platform-auth/youtube-subscribers", "POST", {"since": since}, token))
+
     def _action(self, platform, action, body):
         if platform not in self.SUPPORTED:
             self.notice.emit("Chat actions are not available for %s." % platform.title())
@@ -203,3 +221,12 @@ class PlatformAuth(QObject):
                 self.notice.emit("Chat action failed: %s" % result["error"])
             else:
                 self.notice.emit("Chat action sent.")
+            return
+
+        if tag == "platform:youtube-subscribers":
+            if result.get("status") == 401:
+                self.s.set(self._session_key("youtube"), "")
+                self.s.set("platform_youtube_name", "")
+                self.changed.emit("youtube")
+                self.notice.emit("YouTube login expired. Sign in again to restore subscriber alerts.")
+            self.subscribers.emit(result)

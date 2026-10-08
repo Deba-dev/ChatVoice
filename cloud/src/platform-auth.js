@@ -16,6 +16,7 @@ const providers = {
 };
 let dbReady;
 const YOUTUBE_ACTION_QUOTA_BUDGET = 8000;
+const YOUTUBE_SUBSCRIBER_QUOTA_BUDGET = 2000;
 
 function randomString(length) {
   const bytes = crypto.getRandomValues(new Uint8Array(length));
@@ -61,6 +62,7 @@ async function database(env) {
     dbReady = Promise.all([
       env.DB.prepare("CREATE TABLE IF NOT EXISTS platform_accounts (id INTEGER PRIMARY KEY AUTOINCREMENT, session_hash TEXT NOT NULL UNIQUE, platform TEXT NOT NULL, provider_user_id TEXT NOT NULL, display_name TEXT NOT NULL, access_token TEXT NOT NULL, refresh_token TEXT NOT NULL, expires_at INTEGER NOT NULL)").run(),
       env.DB.prepare("CREATE TABLE IF NOT EXISTS platform_api_quota (day TEXT PRIMARY KEY, used INTEGER NOT NULL)").run(),
+      env.DB.prepare("CREATE TABLE IF NOT EXISTS platform_subscriber_quota (day TEXT PRIMARY KEY, used INTEGER NOT NULL)").run(),
     ])
       .catch((error) => { dbReady = null; throw error; });
   }
@@ -83,6 +85,19 @@ async function reserveYouTubeQuota(env, cost) {
     .bind(cost, day, cost, YOUTUBE_ACTION_QUOTA_BUDGET).run();
   if (!result.meta || result.meta.changes !== 1) {
     const error = new Error("ChatVoice's shared YouTube action budget is used up for today (resets at midnight Pacific Time)");
+    error.status = 429;
+    throw error;
+  }
+}
+
+async function reserveYouTubeSubscriberQuota(env, cost) {
+  const d = await database(env);
+  const day = pacificDay();
+  await d.prepare("INSERT OR IGNORE INTO platform_subscriber_quota (day, used) VALUES (?, 0)").bind(day).run();
+  const result = await d.prepare("UPDATE platform_subscriber_quota SET used = used + ? WHERE day = ? AND used + ? <= ?")
+    .bind(cost, day, cost, YOUTUBE_SUBSCRIBER_QUOTA_BUDGET).run();
+  if (!result.meta || result.meta.changes !== 1) {
+    const error = new Error("The shared YouTube public-subscriber alert quota is used up for today");
     error.status = 429;
     throw error;
   }
@@ -154,7 +169,7 @@ async function start(env, origin, url) {
     authUrl.searchParams.set("access_type", "offline");
     authUrl.searchParams.set("prompt", "consent");
   } else {
-    authUrl.searchParams.set("scope", "user:write:chat channel:manage:polls");
+    authUrl.searchParams.set("scope", "user:write:chat channel:manage:polls moderator:read:followers channel:read:subscriptions");
   }
   return json({ authorizeUrl: authUrl.toString() });
 }
@@ -177,12 +192,16 @@ async function exchangeCode(env, platform, config, code, redirectUri) {
 
 async function profile(env, platform, accessToken) {
   if (platform === "youtube") {
-    const response = await fetch("https://openidconnect.googleapis.com/v1/userinfo", {
+    await reserveYouTubeSubscriberQuota(env, 1);
+    const url = new URL("https://www.googleapis.com/youtube/v3/channels");
+    url.search = new URLSearchParams({ part: "id,snippet", mine: "true" });
+    const response = await fetch(url, {
       headers: { Authorization: "Bearer " + accessToken },
     });
-    const user = await tokenResponse(response, "Google", "account lookup");
-    if (!user.sub) throw new Error("Google did not return the signed-in account");
-    return { id: user.sub, name: user.name || user.email || user.sub };
+    const data = await tokenResponse(response, "YouTube", "channel lookup");
+    const channel = data.items && data.items[0];
+    if (!channel || !channel.id) throw new Error("YouTube did not return a channel for this account");
+    return { id: channel.id, name: channel.snippet && channel.snippet.title || channel.id };
   }
   const response = await fetch("https://api.twitch.tv/helix/users", {
     headers: { Authorization: "Bearer " + accessToken, "Client-Id": env.TWITCH_CLIENT_ID },
@@ -284,6 +303,105 @@ async function accountInfo(request, env) {
   catch (error) { return json({ error: clean(error.message, 140) }, error.status === 400 || error.status === 401 ? 401 : 502); }
   if (!account) return json({ error: "Platform login expired or disconnected. Sign in again." }, 401);
   return json({ platform: account.platform, userId: account.provider_user_id, displayName: account.display_name });
+}
+
+async function twitchEventSub(request, env) {
+  let account;
+  try { account = await accountFor(request, env); }
+  catch (error) { return json({ error: clean(error.message, 140) }, error.status === 400 || error.status === 401 ? 401 : 502); }
+  if (!account) return json({ error: "Platform login expired or disconnected. Sign in again." }, 401);
+  if (account.platform !== "twitch") return json({ error: "Sign in to Twitch to receive Twitch alerts" }, 400);
+  const body = await request.json().catch(() => ({}));
+  const sessionId = String(body.sessionId || "");
+  if (!/^[\w-]{8,256}$/.test(sessionId)) return json({ error: "Twitch EventSub WebSocket session is invalid" }, 400);
+
+  const definitions = [
+    { type: "channel.follow", version: "2", condition: {
+      broadcaster_user_id: account.provider_user_id, moderator_user_id: account.provider_user_id,
+    } },
+    { type: "channel.subscribe", version: "1", condition: { broadcaster_user_id: account.provider_user_id } },
+    { type: "channel.subscription.message", version: "1", condition: { broadcaster_user_id: account.provider_user_id } },
+    { type: "channel.subscription.gift", version: "1", condition: { broadcaster_user_id: account.provider_user_id } },
+    { type: "channel.raid", version: "1", condition: { to_broadcaster_user_id: account.provider_user_id } },
+  ];
+  const subscribed = [], failed = [];
+  try {
+    for (const definition of definitions) {
+      const response = await fetch("https://api.twitch.tv/helix/eventsub/subscriptions", {
+        method: "POST",
+        headers: { Authorization: "Bearer " + account.accessToken, "Client-Id": env.TWITCH_CLIENT_ID, "content-type": "application/json" },
+        body: JSON.stringify({ ...definition, transport: { method: "websocket", session_id: sessionId } }),
+      });
+      if (response.ok) subscribed.push(definition.type);
+      else {
+        const data = await response.json().catch(() => ({}));
+        failed.push({
+          type: definition.type,
+          status: response.status,
+          error: clean(data.message || data.error || "Twitch rejected the event subscription", 120),
+        });
+      }
+    }
+  } catch (error) {
+    return json({ error: clean(error.message || "Could not reach Twitch EventSub", 140) }, 502);
+  }
+  return json({ ok: subscribed.length > 0, subscribed, failed });
+}
+
+async function youtubeSubscribers(request, env) {
+  let account;
+  try { account = await accountFor(request, env); }
+  catch (error) { return json({ error: clean(error.message, 140) }, error.status === 400 || error.status === 401 ? 401 : 502); }
+  if (!account) return json({ error: "Platform login expired or disconnected. Sign in again." }, 401);
+  if (account.platform !== "youtube") return json({ error: "Sign in to YouTube to check public subscribers" }, 400);
+  const body = await request.json().catch(() => ({}));
+  const since = Math.max(0, Number(body.since) || 0);
+  const through = Date.now();
+  try {
+    let channelId = account.provider_user_id;
+    if (!/^UC[\w-]{22}$/.test(channelId)) {
+      await reserveYouTubeSubscriberQuota(env, 1);
+      const channelsUrl = new URL("https://www.googleapis.com/youtube/v3/channels");
+      channelsUrl.search = new URLSearchParams({ part: "id", mine: "true" });
+      const channelResponse = await fetch(channelsUrl, { headers: { Authorization: "Bearer " + account.accessToken } });
+      const channelData = await tokenResponse(channelResponse, "YouTube", "channel lookup");
+      channelId = channelData.items && channelData.items[0] && channelData.items[0].id || "";
+      if (!channelId) throw new Error("YouTube did not return a channel for this account");
+      await env.DB.prepare("UPDATE platform_accounts SET provider_user_id = ? WHERE id = ?").bind(channelId, account.id).run();
+    }
+
+    const subscribers = [];
+    let pageToken = "";
+    let reachedCursor = false;
+    for (let page = 0; page < 10 && !reachedCursor; page++) {
+      await reserveYouTubeSubscriberQuota(env, 1);
+      const url = new URL("https://www.googleapis.com/youtube/v3/subscriptions");
+      url.search = new URLSearchParams({
+        part: "id,snippet,subscriberSnippet",
+        mySubscribers: "true",
+        forChannelId: channelId,
+        maxResults: "50",
+        ...(pageToken ? { pageToken } : {}),
+      });
+      const response = await fetch(url, { headers: { Authorization: "Bearer " + account.accessToken } });
+      const data = await tokenResponse(response, "YouTube", "subscriber lookup");
+      for (const item of data.items || []) {
+        const publishedAt = Date.parse(item.snippet && item.snippet.publishedAt || "");
+        if (!Number.isFinite(publishedAt) || publishedAt <= since || publishedAt > through) {
+          if (Number.isFinite(publishedAt) && publishedAt <= since) reachedCursor = true;
+          continue;
+        }
+        const name = clean(item.subscriberSnippet && item.subscriberSnippet.title || "", 100);
+        if (name) subscribers.push({ id: clean(item.id, 100), name, publishedAt });
+      }
+      pageToken = data.nextPageToken || "";
+      if (!pageToken) break;
+    }
+    return json({ subscribers, cursor: through, publicSubscribersOnly: true });
+  } catch (error) {
+    return json({ error: clean(error.message || "Could not retrieve public YouTube subscribers", 160) },
+      error.status === 429 ? 429 : error.status === 400 || error.status === 401 ? error.status : 502);
+  }
 }
 
 async function youtubeChatId(env, account, videoId) {
@@ -397,6 +515,8 @@ export async function handlePlatformAuth(request, env, url) {
   if (request.method === "GET" && path === providers.twitch.callback) return callback(env, url.origin, url, "twitch");
   if (request.method === "POST" && path === "/platform-auth/redeem") return redeem(request, env);
   if (request.method === "GET" && path === "/platform-auth/account") return accountInfo(request, env);
+  if (request.method === "POST" && path === "/platform-auth/eventsub") return twitchEventSub(request, env);
+  if (request.method === "POST" && path === "/platform-auth/youtube-subscribers") return youtubeSubscribers(request, env);
   if (request.method === "POST" && path === "/platform-auth/message") return action(request, env, "message");
   if (request.method === "POST" && path === "/platform-auth/poll") return action(request, env, "poll");
   if (request.method === "DELETE" && path === "/platform-auth/account") return disconnect(request, env);

@@ -3,19 +3,99 @@ import os
 
 from PySide6.QtCore import Qt, QUrl
 from PySide6.QtGui import QDesktopServices
-from PySide6.QtWidgets import QFileDialog, QLabel, QListWidget, QMessageBox, QPushButton, QSlider, QVBoxLayout, QWidget
+from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
+from PySide6.QtWebEngineCore import QWebEngineDownloadRequest, QWebEnginePage, QWebEngineProfile
+from PySide6.QtWebEngineWidgets import QWebEngineView
+from PySide6.QtWidgets import (QDialog, QFileDialog, QHBoxLayout, QLabel, QListWidget, QListWidgetItem, QMessageBox,
+                               QPushButton, QSlider, QVBoxLayout, QWidget)
 
-from .music import import_downloads
+from .music import import_downloads, scan
 from .settings import data_dir
 from .theme import DEFAULT_THEME, THEMES
 from .ui_kit import (FormScrollArea, bind_switch, copy_row, field_row, hrow, info_box, make_badge, meter_row,
                      option_switch_row, section_card, set_badge, status_row)
 
 
+class _CatalogPage(QWebEnginePage):
+    ALLOWED_HOSTS = ("streambeats.com", "bandcamp.com", "mixkit.co")
+
+    def acceptNavigationRequest(self, url, navigation_type, is_main_frame):
+        host = url.host().lower()
+        if url.scheme() == "https" and any(host == domain or host.endswith("." + domain) for domain in self.ALLOWED_HOSTS):
+            return True
+        if url.scheme() in ("http", "https"):
+            QDesktopServices.openUrl(url)
+        return False
+
+    def createWindow(self, window_type):
+        return self
+
+
+class _MusicCatalogDialog(QDialog):
+    def __init__(self, title, url, on_import, parent=None):
+        super().__init__(parent)
+        self.on_import = on_import
+        self.setWindowTitle(title)
+        self.resize(1000, 720)
+        layout = QVBoxLayout(self)
+        self.status = QLabel("Browse the official catalog. Downloaded audio is copied into your ChatVoice music library.")
+        self.status.setWordWrap(True)
+        layout.addWidget(self.status)
+        self.browser = QWebEngineView(self)
+        self.profile = QWebEngineProfile(self)
+        self.profile.downloadRequested.connect(self._download_requested)
+        self.browser.setPage(_CatalogPage(self.profile, self.browser))
+        self.browser.setUrl(QUrl(url))
+        layout.addWidget(self.browser, 1)
+        buttons = QHBoxLayout()
+        back = QPushButton("Back")
+        back.clicked.connect(self.browser.back)
+        forward = QPushButton("Forward")
+        forward.clicked.connect(self.browser.forward)
+        refresh = QPushButton("Refresh")
+        refresh.clicked.connect(self.browser.reload)
+        close = QPushButton("Close")
+        close.clicked.connect(self.accept)
+        buttons.addWidget(back)
+        buttons.addWidget(forward)
+        buttons.addWidget(refresh)
+        buttons.addStretch(1)
+        buttons.addWidget(close)
+        layout.addLayout(buttons)
+
+    def _download_requested(self, request):
+        folder = os.path.join(data_dir(), "MusicDownloads")
+        os.makedirs(folder, exist_ok=True)
+        request.setDownloadDirectory(folder)
+        request.setDownloadFileName(os.path.basename(request.downloadFileName()) or "download")
+        request.stateChanged.connect(lambda state, item=request: self._download_state_changed(item, state))
+        request.accept()
+        self.status.setText("Downloading %s..." % request.downloadFileName())
+
+    def _download_state_changed(self, request, state):
+        if state == QWebEngineDownloadRequest.DownloadState.DownloadCompleted:
+            path = os.path.join(request.downloadDirectory(), request.downloadFileName())
+            try:
+                imported = self.on_import(path)
+            except (OSError, ValueError) as error:
+                self.status.setText("Download saved, but could not import it: %s" % error)
+                return
+            if imported:
+                self.status.setText("Downloaded and imported %d track(s)." % len(imported))
+            else:
+                self.status.setText("Download saved, but it was not a supported audio file or album ZIP.")
+        elif state in (QWebEngineDownloadRequest.DownloadState.DownloadCancelled,
+                       QWebEngineDownloadRequest.DownloadState.DownloadInterrupted):
+            self.status.setText("The download did not complete.")
+
+
 class MusicPage(FormScrollArea):
     def __init__(self, settings, player, overlay):
         super().__init__()
         self.s, self.player = settings, player
+        self.sound_player = QMediaPlayer(self)
+        self.sound_output = QAudioOutput(self)
+        self.sound_player.setAudioOutput(self.sound_output)
         inner = QWidget()
         inner.setObjectName("page")
         self.setWidget(inner)
@@ -25,7 +105,7 @@ class MusicPage(FormScrollArea):
         accent = THEMES.get(self.s.get("theme"), THEMES[DEFAULT_THEME])["a1"]
 
         # ---------- now playing ----------
-        c, cl = section_card("Now playing", "Music that is safe for streams plays here. Your voice lowers it while chat is being read.")
+        c, cl = section_card("Now playing", "Music you are licensed to use plays here. Your voice lowers it while chat is being read.")
         self.state = make_badge("\u25cf  Stopped", "pill")
         self.title = QLabel("Nothing playing")
         self.title.setObjectName("pageTitle")
@@ -50,18 +130,18 @@ class MusicPage(FormScrollArea):
         # ---------- StreamBeats download library ----------
         c, cl = section_card(
             "Get StreamBeats music",
-            "Browse and download music from the official StreamBeats catalog, then import the downloaded tracks or album ZIP here.",
+            "Browse the official StreamBeats catalog inside ChatVoice. Supported audio and album ZIP downloads are added to your music library automatically.",
         )
         cl.addWidget(info_box(
-            "StreamBeats offers a free creator license for synchronizing its tracks with Twitch and YouTube videos. "
-            "ChatVoice does not bundle or redistribute the music: download it from StreamBeats/Bandcamp yourself, then import it here. "
+            "StreamBeats publishes its own creator license for its tracks. Review the current terms on the provider's site before using a track. "
+            "ChatVoice downloads files directly from the provider and does not bundle or redistribute its music. "
             "A license does not guarantee that automated copyright systems will never flag a stream; keep the official license page as proof.",
             "License and claims",
         ))
         browse = QPushButton("Browse StreamBeats catalog")
         browse.setObjectName("primary")
         browse.setCursor(Qt.PointingHandCursor)
-        browse.clicked.connect(lambda: QDesktopServices.openUrl(QUrl("https://www.streambeats.com/")))
+        browse.clicked.connect(self.browse_catalog)
         downloads = QPushButton("Download free music")
         downloads.clicked.connect(lambda: QDesktopServices.openUrl(QUrl("https://streambeats.bandcamp.com/")))
         licensing = QPushButton("View usage license")
@@ -73,6 +153,34 @@ class MusicPage(FormScrollArea):
         cl.addWidget(hrow(browse, downloads, licensing))
         cl.addWidget(hrow(self.import_btn, self.import_status))
         lay.addWidget(c)
+
+        c, cl = section_card(
+            "Soundboard",
+            "Import short effects you are allowed to use, then play them over your background music. Each sound uses the license chosen by you.",
+        )
+        self.sound_list = QListWidget()
+        self.sound_list.setMinimumHeight(140)
+        self.sound_list.itemDoubleClicked.connect(self.play_sound)
+        self.sound_status = QLabel("")
+        self.sound_status.setObjectName("sub")
+        add_sounds = QPushButton("Import sounds / ZIP")
+        add_sounds.clicked.connect(self.import_sounds)
+        browse_sounds = QPushButton("Browse free sound effects")
+        browse_sounds.clicked.connect(self.browse_sounds)
+        play_sound = QPushButton("Play selected")
+        play_sound.setObjectName("primary")
+        play_sound.clicked.connect(lambda: self.play_sound(self.sound_list.currentItem()))
+        stop_sound = QPushButton("Stop sound")
+        stop_sound.clicked.connect(self.sound_player.stop)
+        cl.addWidget(self.sound_list)
+        cl.addWidget(hrow(browse_sounds, add_sounds, play_sound, stop_sound, self.sound_status))
+        cl.addWidget(info_box(
+            "Browse Mixkit's free sound-effects catalog inside ChatVoice, then download eligible effects directly into your soundboard. "
+            "Check the current Mixkit license and the license for each sound before use. ChatVoice does not bundle or redistribute sound files.",
+            "Sound licenses",
+        ))
+        lay.addWidget(c)
+        self._reload_sounds()
 
         # ---------- local library ----------
         c, cl = section_card("Your music", "Choose a folder with songs you are allowed to use. Name files like \"Artist - Title.mp3\" to show them nicely.")
@@ -157,6 +265,69 @@ class MusicPage(FormScrollArea):
         count = self.player.load_folder(folder)
         self.import_status.setText("Imported %d tracks" % len(imported))
         self.count.setText("%d songs in your library" % count)
+
+    def browse_catalog(self):
+        _MusicCatalogDialog(
+            "StreamBeats music catalog", "https://www.streambeats.com/",
+            self._import_catalog_download, self,
+        ).exec()
+
+    def _import_catalog_download(self, path):
+        folder = os.path.join(data_dir(), "Music")
+        imported = import_downloads([path], folder)
+        if imported:
+            count = self.player.load_folder(folder)
+            self.import_status.setText("Imported %d tracks" % len(imported))
+            self.count.setText("%d songs in your library" % count)
+        return imported
+
+    def browse_sounds(self):
+        _MusicCatalogDialog(
+            "Mixkit sound-effects catalog", "https://mixkit.co/free-sound-effects/",
+            self._import_sound_catalog_download, self,
+        ).exec()
+
+    def _import_sound_catalog_download(self, path):
+        imported = import_downloads([path], self._sound_folder())
+        if imported:
+            self._reload_sounds()
+        return imported
+
+    def _sound_folder(self):
+        return os.path.join(data_dir(), "Soundboard")
+
+    def _reload_sounds(self):
+        self.sound_list.clear()
+        self.sound_items = scan(self._sound_folder())
+        for item in self.sound_items:
+            row = QListWidgetItem(item["title"])
+            row.setData(Qt.UserRole, item["path"])
+            self.sound_list.addItem(row)
+        self.sound_status.setText("%d sounds" % len(self.sound_items))
+
+    def import_sounds(self):
+        paths, _ = QFileDialog.getOpenFileNames(
+            self, "Import licensed sound effects", os.path.expanduser("~/Downloads"),
+            "Audio files and ZIPs (*.mp3 *.wav *.ogg *.flac *.m4a *.aac *.wma *.opus *.zip)",
+        )
+        if not paths:
+            return
+        try:
+            imported = import_downloads(paths, self._sound_folder())
+        except (OSError, ValueError) as error:
+            QMessageBox.warning(self, "Sound import failed", str(error))
+            self.sound_status.setText("Import failed")
+            return
+        self._reload_sounds()
+        self.sound_status.setText("Imported %d sounds" % len(imported) if imported else "No supported audio found")
+
+    def play_sound(self, item):
+        if item is None:
+            return
+        path = item.data(Qt.UserRole)
+        if path and os.path.isfile(path):
+            self.sound_player.setSource(QUrl.fromLocalFile(path))
+            self.sound_player.play()
 
     def choose_folder(self):
         folder = QFileDialog.getExistingDirectory(self, "Choose your music folder", self.s.get("music_folder") or os.path.expanduser("~"))

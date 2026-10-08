@@ -4,15 +4,26 @@ WHAT IT DOES
 Plays songs from a folder on your PC (mp3, wav, ogg, flac, m4a, aac, wma, opus), with play, pause, next, previous and shuffle.
 While ChatVoice reads a chat message aloud the music drops to a lower level (you choose how low), then comes back.
 A "now playing" box can appear on stream (OBS Browser source from the Music page).
+The Soundboard imports local audio effects and plays them independently over the background music. You can select an imported sound
+as the OBS alert notification sound from the OBS overlays page.
 
 STREAMBEATS DOWNLOADS IN CHATVOICE
-1. On the Music page, choose "Browse StreamBeats catalog" or "Download free music". These open the official
-   StreamBeats website and its official Bandcamp download page in your browser.
-2. Complete the free download on Bandcamp. ChatVoice does not scrape, bundle or redistribute their catalog.
-3. Back in ChatVoice, choose "Import downloaded tracks / album ZIP" and select the downloaded ZIP or audio files.
-   Imported tracks are copied into %APPDATA%\ChatVoice\Music and added to the playlist. ZIP imports only copy supported
-   audio formats; unsafe archive paths are ignored.
-4. Double-click a track to play it. You can also keep using any local music folder.
+1. Choose "Browse StreamBeats catalog" to browse the official catalog inside ChatVoice. Preview tracks on the site and
+   download eligible audio/album ZIPs; supported downloads are imported into the ChatVoice music library automatically.
+2. The "Download free music" button remains available to open StreamBeats' official Bandcamp page in your browser.
+   You can manually import those downloads with "Import downloaded tracks / album ZIP".
+3. Imported tracks are copied into %APPDATA%\ChatVoice\Music and added to the playlist. ZIP imports only copy supported
+   audio formats; unsafe archive paths are ignored. Double-click an imported track to play it, or keep using a local folder.
+
+SOUNDBOARD
+1. Choose "Browse free sound effects" to open the Mixkit catalog inside ChatVoice. Preview the available effects on the site,
+   then download eligible files; audio files and ZIPs are added to the soundboard automatically.
+2. You can also choose "Import sounds / ZIP" to add audio files or an archive from local storage.
+3. Double-click a sound or choose Play selected. Effects play over background music. Use OBS overlays > Alert sound file
+   to choose an imported effect for on-screen alerts.
+Imported effects are stored in %APPDATA%\ChatVoice\Soundboard.
+Check Mixkit's current sound-effects license and each provider's terms before use. ChatVoice does not bundle or redistribute
+third-party sound effects.
 
 STREAMBEATS LICENSE
 StreamBeats' published license says its tracks may be synchronized with Twitch and YouTube videos, worldwide,

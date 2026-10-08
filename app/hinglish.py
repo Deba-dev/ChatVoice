@@ -1,6 +1,7 @@
 """Hinglish / Gen Z short-form fixer: rewrites chat slang so the voice reads it properly."""
 import os
 import re
+import unicodedata
 
 on_unknown = None   # optional callback(word) for short words we do not know yet
 
@@ -256,6 +257,33 @@ EMOJI_RX = re.compile(
     r"\u203C\u2049\u2122\u2139\u24C2\u3030\u303D\u3297\u3299\uFE0F\u200D\u20E3]")
 # YouTube sends emoji and channel emotes as :name: codes (always start with a letter or underscore)
 SHORTCODE_RX = re.compile(r":[A-Za-z_][^:\s]{0,60}:")
+KEYCAP_RX = re.compile(r"([0-9#*])\uFE0F?\u20E3")
+EMOJI_NAMES = {
+    "😂": "face with tears of joy", "🤣": "rolling on the floor laughing", "😊": "smiling face",
+    "😃": "grinning face", "😄": "grinning face", "😁": "beaming face", "😆": "laughing face",
+    "😅": "grinning face with sweat", "😉": "winking face", "😍": "heart eyes",
+    "🥰": "smiling face with hearts", "😘": "blowing a kiss", "😭": "crying face",
+    "😢": "sad face", "😡": "angry face", "🤔": "thinking face", "🙄": "rolling eyes",
+    "😎": "smiling face with sunglasses", "🤯": "exploding head", "🥳": "partying face",
+    "💀": "skull", "🔥": "fire", "❤️": "red heart", "❤": "red heart", "💜": "purple heart",
+    "💙": "blue heart", "💚": "green heart", "💛": "yellow heart", "🧡": "orange heart",
+    "🤍": "white heart", "🖤": "black heart", "💔": "broken heart", "💕": "two hearts",
+    "💖": "sparkling heart", "✨": "sparkles", "⭐": "star", "🌟": "glowing star",
+    "👍": "thumbs up", "👎": "thumbs down", "👏": "clapping hands", "🙌": "raising hands",
+    "🙏": "folded hands", "💪": "flexed biceps", "🤝": "handshake", "👀": "eyes",
+    "🎉": "party popper", "🎊": "confetti ball", "💯": "hundred points", "🚀": "rocket",
+    "💎": "gem stone", "🫡": "saluting face", "🤡": "clown face", "🐐": "goat",
+    "🇮🇳": "flag India", "🇺🇸": "flag United States", "🇬🇧": "flag United Kingdom",
+    "🇨🇦": "flag Canada", "🇦🇺": "flag Australia", "🇯🇵": "flag Japan", "🇰🇷": "flag South Korea",
+    "🇧🇷": "flag Brazil", "🇫🇷": "flag France", "🇩🇪": "flag Germany",
+    "👩\u200d💻": "woman technologist", "👨\u200d💻": "man technologist",
+    "👩\u200d🎤": "woman singer", "👨\u200d🎤": "man singer",
+    "👩\u200d🚀": "woman astronaut", "👨\u200d🚀": "man astronaut",
+}
+EMOJI_CLUSTER_RX = re.compile(
+    r"(?:[\U0001F1E6-\U0001F1FF]{2}|"
+    r"[\U0001F000-\U0001FAFF][\uFE0E\uFE0F]?(?:[\U0001F3FB-\U0001F3FF])?"
+    r"(?:\u200d[\U0001F000-\U0001FAFF][\uFE0E\uFE0F]?(?:[\U0001F3FB-\U0001F3FF])?)*)")
 KEEP_AS_IS = {"tv", "pc", "ps", "gb", "mb", "hd", "fps", "gpu", "cpu", "ssd", "hmm", "hmmm", "shh", "ok", "vs"}
 word_map = {}
 unknown_seen = set()
@@ -291,8 +319,29 @@ def load_words(user_path=None):
 
 
 def normalize(text):
-    text = SHORTCODE_RX.sub(" ", text)
-    text = EMOJI_RX.sub("", text)
+    def named_emoji(match):
+        emoji = match.group(0)
+        if emoji in EMOJI_NAMES:
+            return " " + EMOJI_NAMES[emoji] + " "
+        names = []
+        for char in emoji:
+            if char in ("\u200d", "\ufe0e", "\ufe0f") or "\U0001F3FB" <= char <= "\U0001F3FF":
+                continue
+            name = unicodedata.name(char, "")
+            if name and not name.startswith("REGIONAL INDICATOR SYMBOL"):
+                names.append(name.lower().replace("_", " "))
+        return (" " + " ".join(names) + " ") if names else " "
+
+    def named_keycap(match):
+        names = {"0": "zero", "1": "one", "2": "two", "3": "three", "4": "four",
+                 "5": "five", "6": "six", "7": "seven", "8": "eight", "9": "nine",
+                 "#": "number", "*": "asterisk"}
+        return " " + names[match.group(1)] + " "
+
+    text = KEYCAP_RX.sub(named_keycap, text)
+    text = EMOJI_CLUSTER_RX.sub(named_emoji, text)
+    text = EMOJI_RX.sub(" ", text)
+    text = SHORTCODE_RX.sub(lambda m: " " + m.group(0)[1:-1].replace("_", " ") + " ", text)
     for rx, rep in PHRASES:
         text = rx.sub(rep, text)
 

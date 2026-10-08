@@ -2,7 +2,7 @@
 # (use a fresh, empty APPDATA folder each time)
 import os, sys, json, threading, time, urllib.request, urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QPushButton
 from PySide6.QtCore import QTimer, QEventLoop
 app = QApplication(sys.argv); app.setStyle("Fusion")
 def wait(ms):
@@ -87,6 +87,39 @@ from app.models import Message
 w = MainWindow(); w.show()
 w.s.set("muted", True)
 spoken = []; w.speaker.say = lambda *a: spoken.append(a)
+w.mod.blocked = []
+bot_msg = Message("youtube", "ViewerHelper", "hello viewers", bot=True)
+ok(w.mod.check(bot_msg)[1] == "bot", "provider-marked bot messages are skipped even if they are not in the name list")
+known_bot = Message("youtube", "Nightbot", "welcome", "super", "100 bits")
+ok(w.mod.check(known_bot)[1] == "bot", "known bot accounts are skipped even when they post a paid-style event")
+from app.hinglish import normalize
+ok(normalize("Nice 😂👍 1️⃣ :heart:") == "Nice face with tears of joy thumbs up one heart",
+   "emoji and emoji shortcodes are spoken by name rather than removed or read as symbols")
+from app.platforms import parse_kick_event, parse_twitch_line
+from app.platform_events import parse_twitch_event
+twitch_bot = parse_twitch_line("@display-name=Nightbot;user-id=123;emotes=25:0-4 :nightbot!nightbot@nightbot.tmi.twitch.tv PRIVMSG #chat :Kappa 😂")
+ok(twitch_bot.author == "Nightbot" and twitch_bot.text == "Kappa 😂" and w.mod.check(twitch_bot)[1] == "bot",
+   "Twitch emote names are retained for speech and known bot messages are skipped")
+kick_emote = parse_kick_event("ChatMessageEvent", {"content": "Hi [emote:12:catJAM]", "sender": {"username": "viewer"}})
+ok(kick_emote.text == "Hi catJAM", "Kick custom emotes are read by their names")
+follow_alert = parse_twitch_event({"metadata": {"subscription_type": "channel.follow"}, "payload": {"event": {"user_name": "Follower"}}})
+sub_alert = parse_twitch_event({"metadata": {"subscription_type": "channel.subscription.message"},
+                                "payload": {"event": {"user_name": "Supporter", "tier": "1000",
+                                                      "cumulative_months": 6, "message": {"text": "Love this!"}}}})
+raid_alert = parse_twitch_event({"metadata": {"subscription_type": "channel.raid"},
+                                 "payload": {"event": {"user_name": "Raider", "viewers": 42}}})
+ok(follow_alert["category"] == "follow" and sub_alert["amount"] == "Tier 1 · 6 months"
+   and sub_alert["message"] == "Love this!" and raid_alert["amount"] == "42 viewers",
+   "Twitch EventSub events normalize followers, resubs, and raids for the alert overlay")
+import app.discord as discord_module
+old_http = discord_module._http
+announcement = {}
+discord_module._http = lambda method, url, headers, body=None: announcement.update(body=body) or {"ok": True}
+discord_module.post_live_announcement("https://discord.com/api/webhooks/1/token", "Come watch {url}", "abcdefghijk", "Now live")
+discord_module._http = old_http
+ok(announcement["body"]["embeds"][0]["thumbnail"]["url"] == "https://i.ytimg.com/vi/abcdefghijk/hqdefault.jpg"
+   and announcement["body"]["embeds"][0]["description"] == "Come watch https://www.youtube.com/watch?v=abcdefghijk",
+   "Discord announcements include a YouTube thumbnail and expand custom link placeholders")
 w.s.set("cloud_url", "http://127.0.0.1:8811"); w.s.set("cloud_token", "KEY")
 w.links.refresh(); wait(500)
 ok(w.links.linked == {"youtube:UC1", "youtube:UC2"}, "linked viewers loaded from the cloud")
@@ -214,6 +247,16 @@ import app.overlay as _ov
 def ov(path):
     return json.loads(urllib.request.urlopen("http://127.0.0.1:%d%s" % (w.overlay.port, path)).read())
 ok(w.overlay.port > 0 and b"data-mode=\"alert\"" in urllib.request.urlopen(w.overlay.url("alert")).read(), "overlay server runs and serves the alert page (%s)" % w.overlay.url("alert"))
+sound_dir = os.path.join(os.environ["APPDATA"], "ChatVoice", "Soundboard")
+os.makedirs(sound_dir, exist_ok=True)
+sound_file = os.path.join(sound_dir, "alert sound.wav")
+open(sound_file, "wb").write(b"local-alert-sound")
+w.s.set("ov_sound", True); w.s.set("ov_sound_file", sound_file)
+sound_url = w._overlay_cfg()["soundUrl"]
+ok(sound_url == "/sounds/alert%20sound.wav"
+   and urllib.request.urlopen("http://127.0.0.1:%d%s" % (w.overlay.port, sound_url)).read() == b"local-alert-sound",
+   "OBS can load an imported alert sound from the private local soundboard folder")
+w.s.set("ov_sound", False); w.s.set("ov_sound_file", "")
 w.s.set("muted", True); w.s.set("read_super", True)
 start = ov("/poll?type=alert&after=-1")["latest"]
 w.mod.blocked = ["badword"]; w.s.set("tip_min", 20)
@@ -226,9 +269,29 @@ ok([c["name"] for c in chat] == ["Chatty", "Donor"], "chat overlay gets spoken m
 ok([(a["name"], a["amount"], a["message"], a["platform"]) for a in alerts] == [("Donor", "₹200.00", "keep going", "youtube"), ("Rahul", "₹100", "tip message", "tip")], "alert overlay gets Super Chat and payment with amount and message")
 w.on_tip({"name": "Cheap", "message": "tiny", "value": 5, "currency": "INR", "display": "₹5"})
 ok(ov("/poll?type=alert&after=%d" % start)["events"][-1]["message"] == "", "alert for a payment below the minimum shows no message")
+w.on_message(Message("youtube", "NewMember", "", "member"))
+member_alerts = ov("/poll?type=alert&after=%d" % start)["events"]
+ok(member_alerts[-1]["category"] == "membership" and member_alerts[-1]["name"] == "NewMember",
+   "YouTube membership events become separately filterable on-screen alerts")
+yt_alert_start = ov("/poll?type=alert&after=-1")["latest"]
+public_sub = {"id": "YT_PUBLIC_SUB_1", "name": "PublicSubscriber"}
+w.on_youtube_subscribers({"subscribers": [public_sub], "cursor": int(time.time() * 1000)})
+w.on_youtube_subscribers({"subscribers": [public_sub], "cursor": int(time.time() * 1000)})
+yt_sub_alerts = ov("/poll?type=alert&after=%d" % yt_alert_start)["events"]
+ok(len(yt_sub_alerts) == 1 and yt_sub_alerts[0]["category"] == "subscriber"
+   and yt_sub_alerts[0]["name"] == "PublicSubscriber",
+   "YouTube public-subscriber alerts reach OBS once even when overlapping polls repeat an event")
+w.on_twitch_event({"platform": "twitch", "category": "follow", "name": "NewFollower", "message": ""})
+twitch_alert = ov("/poll?type=alert&after=%d" % start)["events"][-1]
+alert_html = urllib.request.urlopen(w.overlay.url("alert")).read().decode("utf-8")
+ok(twitch_alert["category"] == "follow" and twitch_alert["name"] == "NewFollower"
+   and " followed" in alert_html and "showSubscriptions" in alert_html,
+   "Twitch follow alerts reach OBS with readable event text and category filtering")
 w.s.set("ov_seconds", 12); w.apply_theme("Ocean")
 cfg = ov("/poll?type=alert&after=-1")["cfg"]
-ok(cfg["seconds"] == 12 and cfg["colors"]["a1"] == THEMES["Ocean"]["a1"] and cfg["showMessage"] is True, "options and theme colours reach OBS within a second")
+ok(cfg["seconds"] == 12 and cfg["colors"]["a1"] == THEMES["Ocean"]["a1"] and cfg["showMessage"] is True
+   and cfg["showSubscribers"] and cfg["showFollows"] and cfg["showSubscriptions"] and cfg["showRaids"],
+   "options, event toggles, and theme colours reach OBS within a second")
 w.ovpage.alert_url.text(); n0 = ov("/poll?type=alert&after=-1")["latest"]
 w.ovpage.findChildren(__import__("PySide6.QtWidgets", fromlist=["QPushButton"]).QPushButton)
 for b in w.ovpage.findChildren(__import__("PySide6.QtWidgets", fromlist=["QPushButton"]).QPushButton):
@@ -289,6 +352,10 @@ ok(raw["cloud_token"].startswith("dpapi:") and "KEY-SECRET" not in open(sp).read
 print("--- H. gateways ---")
 pg = w.payments; labels = [pg.gw.itemText(i) for i in range(pg.gw.count())]
 ok(len(labels) == 4 and "Stripe" in labels and any("Any other tool" in l for l in labels), "payments page offers Razorpay, Stripe, Cashfree and any other tool")
+pg.tip_link.setText("https://tips.example/creator"); ok(pg.save_tip_link() and w.s.get("tip_link") == "https://tips.example/creator",
+   "quick tip link accepts and saves a public HTTPS payment URL")
+pg.tip_link.setText("javascript:alert(1)"); ok(not pg.save_tip_link() and w.s.get("tip_link") == "https://tips.example/creator",
+   "quick tip link rejects unsafe schemes without replacing the saved URL")
 pg.gw.setCurrentIndex(pg.gw.findData("stripe")); ok("whsec_" in pg.secret.placeholderText() and "checkout.session.completed" in pg.how.text(), "choosing Stripe shows Stripe's own instructions")
 pg.secret.setText("whsec_abc"); pg.save_secret(); wait(500)
 ok(C["config_puts"][-1] == {"stripeSecret": "whsec_abc"} and pg.hook.text().endswith("/hook/stripe/abc") and "saved" in pg.state.text().lower(), "Stripe secret saved on its own; Stripe address shown")
@@ -354,7 +421,7 @@ with zipfile.ZipFile(archive, "w") as z:
     z.writestr("StreamBeats/Artist - Album Track.mp3", b"mp3 data")
     z.writestr("../outside.mp3", b"unsafe path")
     z.writestr("readme.txt", b"not audio")
-library = os.path.join(folder, "managed-music")
+library = tempfile.mkdtemp(prefix="chatvoice-managed-music-")
 added = import_downloads([archive, os.path.join(folder, "third.wav")], library)
 ok(len(added) == 2 and os.path.exists(os.path.join(library, "Artist - Album Track.mp3"))
    and os.path.exists(os.path.join(library, "third.wav"))
@@ -383,6 +450,17 @@ ok(sorted(order) == [0, 1, 2], "shuffle plays every song once before repeating")
 w.music.backend = FakeBackend(); w.music.backend.ended.connect(w.music.next); w.music.set_volume(60)
 w.music.load_folder(folder); wait(200); w.goto(8); wait(300)
 ok(w.musicpage.list.count() == 3 and "3 songs" in w.musicpage.count.text() and not w.musicpage.empty.isVisibleTo(w.musicpage), "music page lists the songs")
+catalog_buttons = {button.text() for button in w.musicpage.findChildren(QPushButton)}
+ok("Browse StreamBeats catalog" in catalog_buttons and "Browse free sound effects" in catalog_buttons,
+   "music and sound-effect catalogs can be opened in-app")
+catalog_track = os.path.join(library, "catalog-download.mp3")
+open(catalog_track, "wb").write(b"audio data")
+music_imported = w.musicpage._import_catalog_download(catalog_track)
+ok(len(music_imported) == 1 and os.path.isfile(music_imported[0]), "catalog music downloads are imported into the music library")
+sound_imported = w.musicpage._import_sound_catalog_download(catalog_track)
+ok(len(sound_imported) == 1 and "catalog-download" in [w.musicpage.sound_list.item(i).text() for i in range(w.musicpage.sound_list.count())],
+   "catalog sound downloads are imported into the soundboard")
+w.music.load_folder(folder)
 w.musicpage.list.setCurrentRow(1); w.music.play_index(1); wait(100)
 ok("Playing" in w.musicpage.state.text() and w.musicpage.title.text() == "Second" and "Pause" in w.musicpage.play_btn.text(), "now-playing panel follows the player")
 w.speaker.busy_changed.emit(True); ok(w.music.backend.vol == round(0.6 * 0.3, 3), "music really gets quieter when ChatVoice starts speaking")
@@ -391,7 +469,7 @@ st = ov("/poll?type=music&after=-1")
 ok(st["state"] == {"title": "Second", "artist": "Bo", "playing": True}, "the OBS now-playing overlay is given the current song")
 ok(b'data-mode="music"' in urllib.request.urlopen(w.overlay.url("music")).read() and w.musicpage.music_url.text().endswith("/music"), "now-playing overlay page exists and its address is on the Music page")
 w.music.stop(); ok(ov("/poll?type=music&after=-1")["state"]["playing"] is False, "stopping hides it on stream")
-w.goto(8); wait(300); w.grab().save(os.path.join(os.environ["APPDATA"], "music.png")); shutil.rmtree(folder, ignore_errors=True)
+w.goto(8); wait(300); w.grab().save(os.path.join(os.environ["APPDATA"], "music.png")); shutil.rmtree(folder, ignore_errors=True); shutil.rmtree(library, ignore_errors=True)
 ok(len([b for b in w.findChildren(__import__("PySide6.QtWidgets", fromlist=["QPushButton"]).QPushButton) if b.objectName() == "nav"]) == 9 and w.nav.button(8).text().strip() == "Music" and not w.nav.button(8).icon().isNull(), "sidebar has all 9 pages, each with a drawn icon (Music included)")
 print("\nALL PASSED" if not fails else "\n%d FAILED" % fails)
 w.close()

@@ -38,8 +38,7 @@ def parse_twitch_line(line):
     text = m.group("msg")
     if text.startswith("\x01ACTION ") and text.endswith("\x01"):
         text = text[8:-1]
-    elif tags.get("emotes"):
-        text = strip_twitch_emotes(text, tags["emotes"])
+    # Twitch emote names are useful speech text; keep them instead of dropping them.
     badges = tags.get("badges", "")
     mod = tags.get("mod") == "1" or "broadcaster/" in badges or "moderator/" in badges
     author = tags.get("display-name") or m.group("nick")
@@ -53,11 +52,12 @@ def parse_kick_event(event, raw):
     if not event.endswith("ChatMessageEvent"):
         return None
     d = json.loads(raw) if isinstance(raw, str) else raw
-    text = re.sub(r"\[emote:\d+:[^\]]*\]", "", d.get("content", "")).strip()
+    text = re.sub(r"\[emote:\d+:([^\]]*)\]", r"\1", d.get("content", "")).strip()
     sender = d.get("sender") or {}
     badges = [b.get("type", "") for b in (sender.get("identity") or {}).get("badges", [])]
     mod = any(b in ("moderator", "broadcaster") for b in badges)
-    return Message("kick", sender.get("username", "?"), text, "chat", "", mod, str(sender.get("id", "")))
+    return Message("kick", sender.get("username", "?"), text, "chat", "", mod, str(sender.get("id", "")),
+                   bool(sender.get("is_bot")))
 
 
 def youtube_id(s):
@@ -145,14 +145,19 @@ class YouTubeSource(Source):
                         first = False
                     else:
                         for c in items:
-                            if c.type in ("textMessage", "superChat", "superSticker"):
-                                paid = c.type != "textMessage"
+                            if c.type in ("textMessage", "superChat", "superSticker", "newSponsor",
+                                          "memberMilestoneChat", "membershipGiftingEvent", "giftMembershipReceivedEvent"):
+                                member = c.type in ("newSponsor", "memberMilestoneChat", "membershipGiftingEvent",
+                                                    "giftMembershipReceivedEvent")
+                                paid = c.type in ("superChat", "superSticker")
                                 a = c.author
                                 self.hub.message.emit(Message(
-                                    "youtube", a.name, c.message or "", "super" if paid else "chat",
+                                    "youtube", a.name, c.message or ("became a channel member" if member else ""),
+                                    "member" if member else ("super" if paid else "chat"),
                                     getattr(c, "amountString", "") if paid else "",
                                     bool(getattr(a, "isChatModerator", False) or getattr(a, "isChatOwner", False)),
-                                    str(getattr(a, "channelId", "") or "")))
+                                    str(getattr(a, "channelId", "") or ""),
+                                    bool(getattr(a, "isChatBot", False))))
                     self.stop_evt.wait(1)
             except Exception as e:
                 if not self.stop_evt.is_set():

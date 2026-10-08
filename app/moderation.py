@@ -6,7 +6,9 @@ import time
 from .hinglish import has_devanagari
 
 KNOWN_BOTS = {"nightbot", "streamelements", "streamlabs", "moobot", "fossabot", "wizebot",
-              "botrix", "kickbot", "sery_bot", "soundalerts"}
+              "botrix", "kickbot", "sery_bot", "soundalerts", "serybot", "commanderroot",
+              "deepbot", "coebot", "phantombot", "vivbot", "stay_hydrated_bot", "streamlabsbot",
+              "ankhbot", "botisimo", "twitchbot"}
 LINK_RX = re.compile(r"https?://|www\.|\b[\w-]+\.(?:com|in|net|org|tv|gg|io|me|co)\b", re.I)
 
 BLOCKED_HELP = """# One word or phrase per line. Messages containing them are NOT read aloud.
@@ -54,16 +56,16 @@ class Moderator:
         if m.platform == "test":
             return True, ""
         s, text = self.s, m.text.strip()
-        paid = m.kind == "super"
+        paid = m.kind in ("super", "member")
         if not text and not paid:
             return False, "empty"
+        name = m.author.lower()
+        if s.get("ignore_bots") and (m.bot or name in KNOWN_BOTS):
+            return False, "bot"
         if self._blocked_hit(text):
             return False, "blocked word"
         if paid:
             return (True, "") if s.get("read_super") else (False, "paid messages off")
-        name = m.author.lower()
-        if s.get("ignore_bots") and name in KNOWN_BOTS:
-            return False, "bot"
         if s.get("mods_only") and not m.mod:
             return False, "mods only"
         if s.get("skip_cmds") and text.startswith("!"):

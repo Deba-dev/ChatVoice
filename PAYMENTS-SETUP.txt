@@ -11,6 +11,11 @@ SET UP (same for every gateway)
 4. Put two fields on your payment page, labelled  Name  and  Message  (ChatVoice finds them by their labels).
 5. Test in the service's TEST MODE. Then tick "Listen for payments and read them aloud".
 
+QUICK TIP LINK (simpler, no payment alert)
+If you already have a public tip/donation URL, open ChatVoice > Payments > Quick tip link, paste the HTTPS link, and save it.
+Copy/open the link to share it with viewers. Viewers pay on the provider's page; this shortcut does not verify payments,
+read messages, or create OBS alerts. Use the webhook setup above if you want payment notifications.
+
 WHERE TO PUT IT
   Razorpay : Settings > Webhooks > Add. Secret = the one you typed. Event: payment.captured (only).
   Stripe   : Developers > Webhooks > Add endpoint. Event: checkout.session.completed. After saving, Stripe shows a

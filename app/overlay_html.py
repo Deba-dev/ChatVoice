@@ -16,6 +16,12 @@ html,body{margin:0;height:100%;background:transparent;overflow:hidden;color:#fff
 .alert::before{content:"";position:absolute;inset:-3px;z-index:-1;border-radius:31px;
   background:linear-gradient(120deg,var(--a1),var(--a2),var(--a3),var(--a1));background-size:300% 300%;animation:shift 4s linear infinite}
 .alert.out{animation:out .55s ease-in both}
+.alert.style-sakura{border-radius:48px;background:linear-gradient(110deg,rgba(47,8,35,.94),rgba(20,10,38,.94));box-shadow:0 14px 48px rgba(0,0,0,.55),0 0 36px #f472b6}
+.alert.style-sakura::before{border-radius:52px;background:linear-gradient(120deg,#ff71b8,#ffe0ef,#c15aff,#ff71b8)}
+.alert.style-brush{border-radius:8px 42px 8px 42px;background:linear-gradient(105deg,rgba(8,13,30,.97),rgba(25,9,35,.9));box-shadow:0 10px 38px rgba(0,0,0,.6),0 0 24px var(--a2)}
+.alert.style-brush::before{border-radius:8px 42px 8px 42px;clip-path:polygon(3% 10%,100% 0,97% 91%,0 100%)}
+.alert.style-frame{border-radius:4px;background:rgba(5,9,19,.94);box-shadow:0 0 28px var(--a1)}
+.alert.style-frame::before{border-radius:5px;clip-path:polygon(0 0,14% 0,17% 7%,83% 7%,86% 0,100% 0,100% 100%,0 100%)}
 .src{font-size:15px;font-weight:700;letter-spacing:3px;text-transform:uppercase;color:var(--a2);margin-bottom:2px}
 .who{font-size:36px;font-weight:700;line-height:1.25;word-break:break-word}
 .amt{background:linear-gradient(90deg,var(--a3),var(--a2));-webkit-background-clip:text;background-clip:text;color:transparent}
@@ -45,6 +51,9 @@ html,body{margin:0;height:100%;background:transparent;overflow:hidden;color:#fff
   font-weight:500;text-shadow:0 1px 3px #000;word-break:break-word;animation:slide .4s cubic-bezier(.2,1.3,.4,1) both}
 .m .tag{display:inline-block;font-weight:700;font-size:14px;padding:2px 8px;border-radius:8px;margin-right:8px;color:#06060f;vertical-align:2px}
 .m b{margin-right:6px}
+.m.style-compact{padding:4px 10px;border-radius:6px;font-size:19px;background:rgba(8,12,22,.72);border-left:3px solid var(--a2)}
+.m.style-panel{width:min(100%,560px);padding:10px 14px;border-radius:4px 14px 14px 4px;background:rgba(5,8,18,.88);border-left:4px solid var(--a1)}
+.m.style-sakura{border-radius:22px 22px 22px 5px;background:rgba(48,12,42,.76);box-shadow:0 0 14px rgba(244,114,182,.38);border:1px solid rgba(255,174,218,.42)}
 .m.old{animation:fade .6s ease-in forwards}
 @keyframes slide{from{opacity:0;transform:translateX(-40px)}to{opacity:1;transform:none}}
 @keyframes fade{to{opacity:0;transform:translateY(-10px)}}
@@ -69,20 +78,31 @@ function sparkle(box){ var s=['✨','💎','🎉','⭐','💜'];
 function next(){
   if(!queue.length){ busy=false; return; }
   busy=true; var e=queue.shift();
-  var box=document.createElement('div'); box.className='alert';
+  var box=document.createElement('div'); box.className='alert style-'+(cfg.alertStyle||'neon');
   var src=document.createElement('div'); src.className='src'; src.textContent=LABELS[e.platform]||e.platform||''; box.appendChild(src);
   var who=document.createElement('div'); who.className='who';
   var nm=document.createElement('span'); nm.className='name'; nm.textContent=e.name||'Someone';
-  var mid=document.createTextNode(' sent '); var am=document.createElement('span'); am.className='amt'; am.textContent=e.amount||'';
-  who.appendChild(nm); who.appendChild(mid); who.appendChild(am); box.appendChild(who);
+  who.appendChild(nm);
+  var actions={membership:' became a member',subscriber:' subscribed',follow:' followed',
+    subscription:' subscribed',gift:' gifted',raid:' raided'};
+  if(actions[e.category]){
+    who.appendChild(document.createTextNode(actions[e.category]));
+    if(e.amount){ var detail=document.createElement('span'); detail.className='amt'; detail.textContent=' · '+e.amount; who.appendChild(detail); }
+  } else {
+    var mid=document.createTextNode(' sent '); var am=document.createElement('span'); am.className='amt'; am.textContent=e.amount||'';
+    who.appendChild(mid); who.appendChild(am);
+  }
+  box.appendChild(who);
   var text=(cfg.showMessage===false)?'':(e.message||'');
   if(text){ var m=document.createElement('div'); m.className='msg'; m.textContent=text; box.appendChild(m); }
-  alertbox.appendChild(box); sparkle(box); if(cfg.sound) chime();
+  alertbox.appendChild(box); sparkle(box);
+  if(cfg.soundUrl){ var sound=new Audio(cfg.soundUrl); sound.volume=0.8; sound.play().catch(function(){}); }
+  else if(cfg.sound) chime();
   var ms=(cfg.seconds||8)*1000+Math.min(8000,text.length*60);
   setTimeout(function(){ box.classList.add('out'); setTimeout(function(){ box.remove(); setTimeout(next,300); },550); },ms);
 }
 function addChat(e){
-  var m=document.createElement('div'); m.className='m';
+  var m=document.createElement('div'); m.className='m style-'+(cfg.chatStyle||'glass');
   var tag=document.createElement('span'); tag.className='tag'; tag.style.background=COLORS[e.platform]||'#aaa'; tag.textContent=(LABELS[e.platform]||e.platform||'').toUpperCase();
   var b=document.createElement('b'); b.textContent=e.name||''; var t=document.createElement('span'); t.textContent=e.text||'';
   m.appendChild(tag); m.appendChild(b); m.appendChild(t); chatbox.appendChild(m);
@@ -100,7 +120,15 @@ function tick(){
     cfg=j.cfg||{}; applyColors(cfg);
     if(MODE==='music'){ showMusic(j.state); return; }
     if(after<0){ after=j.latest; }
-    else { j.events.forEach(function(e){ after=Math.max(after,e.id); if(MODE==='alert'){ queue.push(e); if(!busy) next(); } else addChat(e); }); }
+    else { j.events.forEach(function(e){ after=Math.max(after,e.id); if(MODE==='alert'){
+      var category=e.category||(e.platform==='tip'?'tip':(e.amount?'superchat':'other'));
+      if((category==='tip'&&cfg.showTips===false)||(category==='superchat'&&cfg.showSuperchats===false)||
+         (category==='membership'&&cfg.showMemberships===false)||(category==='subscriber'&&cfg.showSubscribers===false)||
+         (category==='follow'&&cfg.showFollows===false)||(category==='subscription'&&cfg.showSubscriptions===false)||
+         (category==='gift'&&cfg.showSubscriptions===false)||
+         (category==='raid'&&cfg.showRaids===false)) return;
+      queue.push(e); if(!busy) next();
+    } else addChat(e); }); }
   }).catch(function(){}).then(function(){ setTimeout(tick,POLL); });
 }
 tick();
@@ -111,7 +139,7 @@ tick();
 INDEX = """<!doctype html><meta charset="utf-8"><title>ChatVoice overlays</title>
 <body style="font:16px sans-serif;background:#10101c;color:#eee;padding:30px">
 <h2>ChatVoice overlays</h2><p style="opacity:.7">ChatVoice (BETA) by itsmeblitz</p><p>Add these as <b>Browser sources</b> in OBS:</p>
-<ul><li><a style="color:#8ab4ff" href="/alert">/alert</a> payment and Super Chat alerts</li>
+<ul><li><a style="color:#8ab4ff" href="/alert">/alert</a> payment, subscription, and channel-event alerts</li>
 <li><a style="color:#8ab4ff" href="/chat">/chat</a> chat on screen</li>
 <li><a style="color:#8ab4ff" href="/music">/music</a> now playing</li></ul></body>"""
 

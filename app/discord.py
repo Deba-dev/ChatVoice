@@ -91,17 +91,25 @@ def normalize_youtube_url(value):
     return "https://www.youtube.com/watch?v=%s" % vid if vid else value
 
 
-def post_live_announcement(url, message, youtube_link):
+def post_live_announcement(url, message, youtube_link, title="🔴 LIVE NOW"):
     """Post a rich live announcement with a clickable YouTube embed and custom message."""
     link = normalize_youtube_url(youtube_link)
     if not link:
         return {"error": "Enter a YouTube live link or video ID first"}
-    msg = (message or "I'm live! Come hang out").strip()
+    video_id = youtube_id(youtube_link)
+    if not video_id:
+        return {"error": "Use the active YouTube video link or video ID, not a channel link"}
+    def fill_template(value):
+        return (value or "").replace("{url}", link).replace("{video_id}", video_id)
+
+    msg = fill_template(message or "I'm live! Come hang out").strip()
+    heading = fill_template(title or "🔴 LIVE NOW").strip()
     embed = {
-        "title": "🔴 LIVE NOW",
+        "title": heading[:256] or "🔴 LIVE NOW",
         "description": msg[:4096],
         "url": link,
         "color": 0xFF0000,
+        "thumbnail": {"url": "https://i.ytimg.com/vi/%s/hqdefault.jpg" % video_id},
         "fields": [
             {"name": "Watch on YouTube", "value": "[▶ Open the live stream](%s)" % link, "inline": False}
         ],

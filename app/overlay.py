@@ -11,8 +11,8 @@ from .overlay_html import INDEX, page
 
 
 class Overlay:
-    def __init__(self, settings, fonts_dir, cfg_fn):
-        self.s, self.fonts_dir, self.cfg_fn = settings, fonts_dir, cfg_fn
+    def __init__(self, settings, fonts_dir, cfg_fn, sounds_dir=""):
+        self.s, self.fonts_dir, self.cfg_fn, self.sounds_dir = settings, fonts_dir, cfg_fn, sounds_dir
         self.port = 0
         self.server = None
         self.error = ""
@@ -85,6 +85,19 @@ class Overlay:
                     if os.path.isfile(f):
                         with open(f, "rb") as fh:
                             return self._send(200, fh.read(), "font/ttf")
+                sound_path = urllib.parse.unquote(u.path)
+                m = re.fullmatch(r"/sounds/([^/\\]{1,220})", sound_path)
+                if m and overlay.sounds_dir:
+                    name = m.group(1)
+                    if os.path.splitext(name)[1].lower() not in (".mp3", ".wav", ".ogg", ".flac", ".m4a", ".aac", ".opus"):
+                        return self._send(404, "not found", "text/plain")
+                    f = os.path.realpath(os.path.join(overlay.sounds_dir, name))
+                    root = os.path.realpath(overlay.sounds_dir)
+                    if os.path.basename(f) == name and os.path.commonpath((root, f)) == root and os.path.isfile(f):
+                        ctype = {"mp3": "audio/mpeg", "wav": "audio/wav", "ogg": "audio/ogg", "flac": "audio/flac",
+                                 "m4a": "audio/mp4", "aac": "audio/aac", "opus": "audio/ogg"}[os.path.splitext(f)[1].lower()[1:]]
+                        with open(f, "rb") as fh:
+                            return self._send(200, fh.read(), ctype)
                 self._send(404, "not found", "text/plain")
 
         start = int(self.s.get("ov_port"))

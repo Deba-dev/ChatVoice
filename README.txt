@@ -25,10 +25,10 @@ PAGES IN THE APP
   Voice       voices, speed, volume, "different voice per viewer", Hinglish word list
   Moderation  what gets read aloud: link / command / bot / repeat filters, blocked words
   Discord     one click to add the bot, one click to make roles and invite links; the rest is under Advanced
-  Payments    payment alerts read aloud (Razorpay / Stripe / Cashfree / any tool)
+  Payments    payment alerts (Razorpay / Stripe / Cashfree / any tool) plus a shareable quick tip link
   YouTube mod add the ChatVoice bot to your channel, verify it is yours, choose the rules (like Nightbot)
-  OBS overlays  alert, chat and now-playing sources, or use your StreamElements overlay URL in OBS
-  Music       browse/download StreamBeats music, import album ZIPs or local files, play with OBS now-playing
+  OBS overlays  alerts for tips, YouTube public subscribers/members, and Twitch follows/subs/raids, with multiple looks
+  Music       browse StreamBeats music and Mixkit sound effects in-app, download/import them, and use local files
   Sidebar     Theme (4 colour themes) and Lite mode (turns off glow/fade animations for weak PCs or gaming)
 
 RUN IT (easiest)
@@ -57,9 +57,10 @@ USING IT
 - Connect: paste your YouTube live link, Twitch channel, Kick channel. Press Connect.
 - Kick: if it says "Kick blocked the lookup", open  https://kick.com/api/v2/channels/YOURNAME  in a browser,
   find  "chatroom":{"id":NUMBER  and paste that number in the box under the Kick channel.
-- Voice: voices, speed, volume. Emoji, :emoji_codes: and Twitch emote words are never read aloud.
+- Voice: voices, speed, volume. Unicode emoji and named emotes are spoken by name; known bots are skipped by default.
 - Moderation: link / command / bot / repeat filters and your own blocked-words list (what gets READ).
-- Discord: start with invite-based roles; optional activity roles and announcements are under Advanced. Needs the one-time cloud setup: see CLOUD-SETUP.txt.
+- Discord: invite roles, automatic YouTube live announcements with a thumbnail, and customizable title/message templates.
+  Needs the one-time cloud setup: see CLOUD-SETUP.txt.
 
 USING IT WITH OBS
 ChatVoice is a normal window that plays sound on your PC. To put the voice on your stream:

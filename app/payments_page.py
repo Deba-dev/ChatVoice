@@ -1,5 +1,8 @@
 """Payments page: connect the streamer's Razorpay webhook and choose how payments are read."""
-from PySide6.QtGui import QGuiApplication
+import urllib.parse
+
+from PySide6.QtCore import QUrl
+from PySide6.QtGui import QDesktopServices, QGuiApplication
 from PySide6.QtWidgets import QComboBox, QLabel, QLineEdit, QPushButton, QSpinBox, QVBoxLayout, QWidget
 
 from .discord import run_bg
@@ -102,6 +105,26 @@ class PaymentsPage(FormScrollArea):
         note.setWordWrap(True)
         cl.addWidget(note)
         lay.addWidget(c)
+
+        c, cl = section_card(
+            "Quick tip link",
+            "Paste a payment or tipping page link to share with viewers. This opens your provider's page; it does not process or alert on payments.",
+        )
+        self.tip_link = QLineEdit(self.s.get("tip_link"))
+        self.tip_link.setPlaceholderText("https://your-payment-provider.example/your-link")
+        save_link = QPushButton("Save link")
+        save_link.setObjectName("primary")
+        save_link.clicked.connect(self.save_tip_link)
+        copy_link = QPushButton("Copy")
+        copy_link.clicked.connect(self.copy_tip_link)
+        open_link = QPushButton("Open")
+        open_link.clicked.connect(self.open_tip_link)
+        self.link_status = QLabel("")
+        self.link_status.setObjectName("sub")
+        cl.addWidget(field_row("Viewer tip page", "Use a public HTTPS link from a payment provider you trust.", self.tip_link))
+        cl.addWidget(hrow(save_link, copy_link, open_link, self.link_status))
+        lay.addWidget(c)
+
         lay.addStretch(1)
         bridge.done.connect(self.on_done)
         poller.status.connect(self.status.setText)
@@ -135,6 +158,28 @@ class PaymentsPage(FormScrollArea):
     def test_tip(self):
         self.poller.tip.emit({"name": "Rahul", "message": "Great stream bhai, keep it up!", "value": 100.0,
                               "currency": "INR", "display": "₹100"})
+
+    def save_tip_link(self):
+        raw = self.tip_link.text().strip()
+        try:
+            parsed = urllib.parse.urlsplit(raw)
+        except ValueError:
+            self.link_status.setText("Enter a valid HTTPS tip link")
+            return False
+        if parsed.scheme != "https" or not parsed.netloc:
+            self.link_status.setText("Enter a valid HTTPS tip link")
+            return False
+        self.s.set("tip_link", raw)
+        self.link_status.setText("Tip link saved")
+        return True
+
+    def copy_tip_link(self):
+        if self.save_tip_link():
+            QGuiApplication.clipboard().setText(self.s.get("tip_link"))
+
+    def open_tip_link(self):
+        if self.save_tip_link():
+            QDesktopServices.openUrl(QUrl(self.s.get("tip_link")))
 
     def on_done(self, tag, res):
         if not tag.startswith("pay:"):

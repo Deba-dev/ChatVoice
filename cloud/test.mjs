@@ -6,6 +6,8 @@ const KV = { async get(k) { return store.has(k) ? store.get(k) : null; }, async 
 const env = { KV, DISCORD_CLIENT_ID: "CID", DISCORD_CLIENT_SECRET: "SEC", DISCORD_BOT_TOKEN: "BOT" };
 const puts = [];
 const platformCalls = [];
+const eventSubCalls = [];
+let youtubeSubscribers = [];
 let memberOk = true, roleStatus = 204;
 const baseRoles = () => [{ id: "1", name: "@everyone", position: 0 }, { id: "100001", name: "Verified", position: 3 }, { id: "100002", name: "Regular", position: 2 }, { id: "100003", name: "Supporter", position: 4 }, { id: "9", name: "BotRole", managed: true, position: 5 }];
 let rolesNow = baseRoles(), roleCreateStatus = 200, systemChannel = "C1", inviteSeq = 0; const createdRoles = [], createdInvites = [];
@@ -24,8 +26,12 @@ globalThis.fetch = async (url, init = {}) => {
   if (u.hostname === "id.twitch.tv" && p === "/oauth2/token") {
     return j({ access_token: "TW_ACCESS", refresh_token: "TW_REFRESH", expires_in: 3600 });
   }
-  if (u.hostname === "openidconnect.googleapis.com" && p === "/v1/userinfo") {
-    return j({ sub: "GOOGLE_USER", name: "Test YouTube" });
+  if (u.hostname === "www.googleapis.com" && p === "/youtube/v3/channels") {
+    return j({ items: [{ id: "UC" + "a".repeat(22), snippet: { title: "Test YouTube Channel" } }] });
+  }
+  if (u.hostname === "www.googleapis.com" && p === "/youtube/v3/subscriptions") {
+    platformCalls.push({ platform: "youtube", path: p, url: u.toString() });
+    return j({ items: youtubeSubscribers });
   }
   if (u.hostname === "www.googleapis.com" && p === "/youtube/v3/liveBroadcasts") {
     return j({ items: [{ id: "abcdefghijk", snippet: { liveChatId: "CHAT_ID" } }] });
@@ -36,6 +42,11 @@ globalThis.fetch = async (url, init = {}) => {
   }
   if (u.hostname === "api.twitch.tv" && p === "/helix/users") {
     return j({ data: [{ id: "TWITCH_USER", display_name: "Test Twitch" }] });
+  }
+  if (u.hostname === "api.twitch.tv" && p === "/helix/eventsub/subscriptions") {
+    const body = JSON.parse(init.body);
+    eventSubCalls.push({ body, headers: init.headers });
+    return j({ data: [{ type: body.type }] }, 202);
   }
   if (u.hostname === "api.twitch.tv" && (p === "/helix/chat/messages" || p === "/helix/polls")) {
     platformCalls.push({ platform: "twitch", path: p, body: init.body && JSON.parse(init.body) });
@@ -145,7 +156,7 @@ r = await worker.fetch(new Request("https://cv.example/setup"), broken); ok(r.st
 
 // 8. payments: Razorpay webhook -> D1 queue -> app
 class FakeDB {
-  constructor() { this.rows = []; this.accounts = []; this.quota = new Map(); this.seq = 0; this.accountSeq = 0; }
+  constructor() { this.rows = []; this.accounts = []; this.quota = new Map(); this.subscriberQuota = new Map(); this.seq = 0; this.accountSeq = 0; }
   prepare(sql) {
     const self = this;
     return { args: [], bind(...a) { this.args = a; return this; },
@@ -163,6 +174,19 @@ class FakeDB {
           }
           return { meta: { changes: 0 } };
         }
+        if (sql.startsWith("INSERT OR IGNORE INTO platform_subscriber_quota")) {
+          const [day] = this.args;
+          if (!self.subscriberQuota.has(day)) self.subscriberQuota.set(day, 0);
+        }
+        if (sql.startsWith("UPDATE platform_subscriber_quota")) {
+          const [cost, day, extraCost, limit] = this.args;
+          const used = self.subscriberQuota.get(day) || 0;
+          if (used + extraCost <= limit) {
+            self.subscriberQuota.set(day, used + cost);
+            return { meta: { changes: 1 } };
+          }
+          return { meta: { changes: 0 } };
+        }
         if (sql.startsWith("INSERT INTO platform_accounts")) {
           const [session_hash, platform, provider_user_id, display_name, access_token, refresh_token, expires_at] = this.args;
           let row = self.accounts.find((x) => x.session_hash === session_hash);
@@ -170,9 +194,15 @@ class FakeDB {
           Object.assign(row, { session_hash, platform, provider_user_id, display_name, access_token, refresh_token, expires_at });
         }
         if (sql.startsWith("UPDATE platform_accounts")) {
-          const [access_token, refresh_token, expires_at, id] = this.args;
-          const row = self.accounts.find((x) => x.id === id);
-          if (row) Object.assign(row, { access_token, refresh_token, expires_at });
+          if (sql.includes("SET provider_user_id")) {
+            const [provider_user_id, id] = this.args;
+            const row = self.accounts.find((x) => x.id === id);
+            if (row) row.provider_user_id = provider_user_id;
+          } else {
+            const [access_token, refresh_token, expires_at, id] = this.args;
+            const row = self.accounts.find((x) => x.id === id);
+            if (row) Object.assign(row, { access_token, refresh_token, expires_at });
+          }
         }
         if (sql.startsWith("DELETE FROM platform_accounts")) {
           const previous = self.accounts.length;
@@ -221,12 +251,12 @@ ok(ytLogin.started.status === 200 && ytLogin.authorize.searchParams.get("scope")
 let redeemed = await call("/platform-auth/redeem", { method: "POST", body: JSON.stringify({ ticket: ytReturn.searchParams.get("ticket") }) });
 let ytAccount = await redeemed.json();
 let ytHeaders = { Authorization: "Bearer " + ytAccount.session, "content-type": "application/json" };
-ok(redeemed.status === 200 && ytAccount.platform === "youtube" && ytAccount.displayName === "Test YouTube",
+ok(redeemed.status === 200 && ytAccount.platform === "youtube" && ytAccount.displayName === "Test YouTube Channel",
   "YouTube OAuth ticket redeems into an app session and account identity");
 r = await call("/platform-auth/redeem", { method: "POST", body: JSON.stringify({ ticket: ytReturn.searchParams.get("ticket") }) });
 ok(r.status === 400, "OAuth ticket can only be redeemed once");
 r = await call("/platform-auth/account", { headers: ytHeaders });
-ok((await r.json()).displayName === "Test YouTube", "YouTube account session is recognized");
+ok((await r.json()).displayName === "Test YouTube Channel", "YouTube account session is recognized");
 const ytRow = env.DB.accounts.find((x) => x.platform === "youtube");
 ytRow.expires_at = Math.floor(Date.now() / 1000) - 1;
 r = await call("/platform-auth/account", { headers: ytHeaders });
@@ -238,6 +268,28 @@ ok(r.status === 200 && platformCalls.some((x) => x.platform === "youtube" && x.b
 r = await call("/platform-auth/poll", { method: "POST", headers: ytHeaders, body: JSON.stringify({ platform: "youtube", videoId: "abcdefghijk", question: "Next game?", options: ["A", "B"] }) });
 ok(r.status === 200 && platformCalls.some((x) => x.platform === "youtube" && x.body.snippet.type === "pollEvent" && x.body.snippet.pollDetails.metadata.options.length === 2),
   "YouTube live poll is created with valid choices");
+youtubeSubscribers = [{
+  id: "YT_SUB_1", snippet: { publishedAt: new Date(Date.now() - 10000).toISOString() },
+  subscriberSnippet: { title: "Public new subscriber" },
+}, {
+  id: "YT_SUB_PRIVATE", snippet: { publishedAt: new Date(Date.now() - 5000).toISOString() },
+}];
+r = await call("/platform-auth/youtube-subscribers", {
+  method: "POST", headers: ytHeaders, body: JSON.stringify({ since: Date.now() - 30000 }),
+});
+const subscriberResult = await r.json();
+ok(r.status === 200 && subscriberResult.publicSubscribersOnly && subscriberResult.subscribers.length === 1
+  && subscriberResult.subscribers[0].name === "Public new subscriber"
+  && platformCalls.some((x) => x.path === "/youtube/v3/subscriptions" && x.url.includes("forChannelId=UC")),
+  "YouTube alerts poll recent public subscribers and omit private subscriber identities");
+const subscriberQuotaDay = [...env.DB.subscriberQuota.keys()][0];
+env.DB.subscriberQuota.set(subscriberQuotaDay, 2000);
+const callsBeforeSubscriberLimit = platformCalls.length;
+r = await call("/platform-auth/youtube-subscribers", {
+  method: "POST", headers: ytHeaders, body: JSON.stringify({ since: Date.now() - 30000 }),
+});
+ok(r.status === 429 && platformCalls.length === callsBeforeSubscriberLimit,
+  "public-subscriber polling respects its separate shared daily quota");
 const quotaDay = [...env.DB.quota.keys()][0], apiCallsBeforeQuotaLimit = platformCalls.length;
 env.DB.quota.set(quotaDay, 8000);
 r = await call("/platform-auth/message", { method: "POST", headers: ytHeaders, body: JSON.stringify({ platform: "youtube", videoId: "abcdefghijk", text: "Over quota" }) });
@@ -253,7 +305,19 @@ let twAccount = await twRedeemed.json();
 let twHeaders = { Authorization: "Bearer " + twAccount.session, "content-type": "application/json" };
 ok(twLogin.authorize.searchParams.get("scope").includes("user:write:chat")
   && twLogin.authorize.searchParams.get("scope").includes("channel:manage:polls")
-  && twAccount.displayName === "Test Twitch", "Twitch login requests chat and poll permissions");
+  && twLogin.authorize.searchParams.get("scope").includes("moderator:read:followers")
+  && twLogin.authorize.searchParams.get("scope").includes("channel:read:subscriptions")
+  && twAccount.displayName === "Test Twitch", "Twitch login requests chat, poll, follow, and subscription permissions");
+r = await call("/platform-auth/eventsub", {
+  method: "POST", headers: twHeaders, body: JSON.stringify({ sessionId: "eventsub-session-123" }),
+});
+const eventSubResult = await r.json();
+ok(r.status === 200 && eventSubResult.ok && eventSubResult.subscribed.length === 5
+  && eventSubCalls.some((x) => x.body.type === "channel.follow" && x.body.version === "2"
+    && x.body.transport.session_id === "eventsub-session-123")
+  && eventSubCalls.some((x) => x.body.type === "channel.subscription.gift")
+  && eventSubCalls.some((x) => x.body.type === "channel.raid"),
+  "Twitch EventSub registers follow, subscribe, resub, gift, and raid notifications on the desktop socket");
 r = await call("/platform-auth/message", { method: "POST", headers: twHeaders, body: JSON.stringify({ platform: "twitch", text: "Hello Twitch" }) });
 ok(r.status === 200 && platformCalls.some((x) => x.path === "/helix/chat/messages" && x.body.message === "Hello Twitch"),
   "Twitch chat message is sent with the signed-in broadcaster account");

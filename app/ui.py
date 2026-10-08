@@ -3,6 +3,7 @@ import html
 import os
 import sys
 import time
+import urllib.parse
 
 from PySide6.QtCore import Property, QEasingCurve, QEvent, QParallelAnimationGroup, QPropertyAnimation, QSize, Qt, QTimer, QUrl
 from PySide6.QtGui import QColor, QDesktopServices, QFont, QFontDatabase, QIcon, QPainter, QPalette, QPen, QPixmap, QTextBlockFormat, QTextCursor, QTextOption
@@ -15,6 +16,7 @@ from .discord import Bridge, Cloud, LinkManager
 from .discord_page import DiscordPage
 from .overlay import Overlay
 from .overlay_ui import OverlayPage
+from .platform_events import TwitchEventSub
 from .payments import TipPoller
 from .payments_page import PaymentsPage
 from .platform_auth import PlatformAuth
@@ -339,7 +341,7 @@ class PlatformCard(QFrame):
             self.auth_label.setText("Signed in as %s" % (self.platform_auth.display_name(platform) or "account"))
             self.auth_btn.setText("Disconnect account")
         else:
-            self.auth_label.setText("Sign in to send chat and polls")
+            self.auth_label.setText("Sign in for chat, polls, and platform alerts")
             self.auth_btn.setText("Login")
 
     def enterEvent(self, event):
@@ -425,6 +427,12 @@ class MainWindow(QWidget):
         self.fx.enabled = not bool(self.s.get("lite_mode"))
         self.bridge = Bridge()
         self.platform_auth = PlatformAuth(self.s, self.bridge)
+        self.twitch_events = TwitchEventSub(self.platform_auth)
+        self.yt_subscriber_timer = QTimer(self)
+        self.yt_subscriber_timer.setInterval(300000)
+        self.yt_subscriber_timer.timeout.connect(self._poll_youtube_subscribers)
+        self._subscriber_error = ""
+        self.s.set("yt_subscriber_cursor", int(time.time() * 1000))
         self.cloud = Cloud(self.s)
         self.links = LinkManager(self.s, self.cloud, self.bridge, os.path.join(data_dir(), "counts.json"))
         self.discord = DiscordPage(self.s, self.cloud, self.bridge, self.links)
@@ -434,7 +442,8 @@ class MainWindow(QWidget):
         self.ytpage = YtModPage(self.s, self.ytmod)
         self.yt_beat = QTimer(self)                       # keeps the free-hosted bot awake while you stream on YouTube
         self.yt_beat.timeout.connect(self.ytmod.refresh_info)
-        self.overlay = Overlay(self.s, os.path.join(ROOT, "assets", "fonts"), self._overlay_cfg)
+        self.overlay = Overlay(self.s, os.path.join(ROOT, "assets", "fonts"), self._overlay_cfg,
+                               os.path.join(data_dir(), "Soundboard"))
         self.overlay.start()
         self.ovpage = OverlayPage(self.s, self.overlay)
         self.music = MusicPlayer(self.s, self.overlay.push)
@@ -464,6 +473,9 @@ class MainWindow(QWidget):
         self.hub.status.connect(self.on_status)
         self.platform_auth.notice.connect(lambda t: self.feed.append("<span style='color:#8ab4ff'>Account: %s</span>" % esc(t)))
         self.platform_auth.changed.connect(self._platform_account_changed)
+        self.platform_auth.subscribers.connect(self.on_youtube_subscribers)
+        self.twitch_events.alert.connect(self.on_twitch_event)
+        self.twitch_events.notice.connect(lambda t: self.feed.append("<span style='color:#9146ff'>Twitch alerts: %s</span>" % esc(t)))
         self.platform_auth.refresh("youtube")
         self.platform_auth.refresh("twitch")
         self.speaker.note.connect(lambda t: self.feed.append("<span style='color:#ffb020'>%s</span>" % esc(t)))
@@ -601,9 +613,25 @@ class MainWindow(QWidget):
 
     def _overlay_cfg(self):
         t = THEMES.get(self.s.get("theme"), THEMES[DEFAULT_THEME])
-        return {"colors": {"a1": t["a1"], "a2": t["a2"], "a3": t["a3"]}, "sound": bool(self.s.get("ov_sound")),
+        sound_path = self.s.get("ov_sound_file") or ""
+        sound_name = os.path.basename(sound_path)
+        sound_url = ""
+        sound_dir = os.path.realpath(os.path.join(data_dir(), "Soundboard"))
+        if (self.s.get("ov_sound") and sound_name and os.path.isfile(sound_path) and
+                os.path.dirname(os.path.realpath(sound_path)) == sound_dir):
+            sound_url = "/sounds/" + urllib.parse.quote(sound_name)
+        return {"colors": {"a1": t["a1"], "a2": t["a2"], "a3": t["a3"]}, "sound": bool(self.s.get("ov_sound")) and not sound_url,
                 "seconds": int(self.s.get("ov_seconds")), "showMessage": bool(self.s.get("ov_show_message")),
-                "chatSeconds": int(self.s.get("ov_chat_seconds")), "maxLines": 8}
+                "chatSeconds": int(self.s.get("ov_chat_seconds")), "maxLines": 8,
+                "soundUrl": sound_url,
+                "alertStyle": self.s.get("ov_alert_style"), "chatStyle": self.s.get("ov_chat_style"),
+                "showTips": bool(self.s.get("ov_alert_tips")),
+                "showSuperchats": bool(self.s.get("ov_alert_superchats")),
+                "showMemberships": bool(self.s.get("ov_alert_memberships")),
+                "showSubscribers": bool(self.s.get("ov_alert_youtube_subscribers")),
+                "showFollows": bool(self.s.get("ov_alert_follows")),
+                "showSubscriptions": bool(self.s.get("ov_alert_subscriptions")),
+                "showRaids": bool(self.s.get("ov_alert_raids"))}
 
     def _build_topbar(self):
         bar = QWidget()
@@ -696,10 +724,11 @@ class MainWindow(QWidget):
         lay.addLayout(stats)
         self.cards = {
             "youtube": PlatformCard("youtube", "YouTube Live", "Paste a live link or video ID", YouTubeSource(self.hub), self.s,
-                                    hint="Chat reading reconnects automatically. Sign in to send chat and polls.",
+                                    hint="Chat reading reconnects automatically. Sign in to send chat/polls and show public-subscriber alerts; memberships come from live chat.",
                                     field="Stream link or video ID", platform_auth=self.platform_auth),
             "twitch": PlatformCard("twitch", "Twitch", "Channel name", TwitchSource(self.hub), self.s,
-                                   hint="Reads chat anonymously. Sign in to send chat and polls.", field="Channel name",
+                                   hint="Reads chat anonymously. Sign in for follower, subscription, gift, and raid alerts; new alert permissions are requested.",
+                                   field="Channel name",
                                    platform_auth=self.platform_auth),
             "kick": PlatformCard("kick", "Kick", "Channel name", KickSource(self.hub), self.s,
                                  extra=("kick_room", "Chatroom ID, only if the name lookup fails"),
@@ -815,6 +844,56 @@ class MainWindow(QWidget):
         label = platform.title() + ((" — " + name) if self.platform_auth.is_connected(platform) and name
                                     else (" — signed in" if self.platform_auth.is_connected(platform) else " — sign-in needed"))
         self.action_platform.setItemText(index, label)
+        if platform == "twitch":
+            if self.platform_auth.is_connected(platform):
+                self.twitch_events.start()
+            else:
+                self.twitch_events.stop()
+        elif platform == "youtube":
+            if self.platform_auth.is_connected(platform):
+                if not self.yt_subscriber_timer.isActive():
+                    self.yt_subscriber_timer.start()
+                    self._poll_youtube_subscribers()
+            else:
+                self.yt_subscriber_timer.stop()
+
+    def _poll_youtube_subscribers(self):
+        if not self.s.get("ov_alert_youtube_subscribers"):
+            self.s.set("yt_subscriber_cursor", int(time.time() * 1000))
+            return
+        if self.platform_auth.is_connected("youtube"):
+            self.platform_auth.poll_youtube_subscribers(int(self.s.get("yt_subscriber_cursor") or 0))
+
+    def on_youtube_subscribers(self, result):
+        if result.get("error"):
+            if result["error"] != self._subscriber_error:
+                self._subscriber_error = result["error"]
+                self.feed.append("<span style='color:#ff8a5c'>YouTube subscriber alerts: %s</span>" % esc(result["error"]))
+            return
+        self._subscriber_error = ""
+        saved_seen = self.s.get("yt_subscriber_seen")
+        seen = list(saved_seen) if isinstance(saved_seen, list) else []
+        seen_ids = set(seen)
+        for subscriber in result.get("subscribers") or []:
+            uid = subscriber.get("id")
+            if not uid or uid in seen_ids:
+                continue
+            seen_ids.add(uid)
+            seen.append(uid)
+            if self.s.get("ov_alert_youtube_subscribers"):
+                self.overlay.push("alert", {
+                    "platform": "youtube",
+                    "category": "subscriber",
+                    "name": subscriber.get("name") or "Someone",
+                    "message": "",
+                })
+        self.s.set("yt_subscriber_seen", seen[-500:])
+        self.s.set("yt_subscriber_cursor", int(result.get("cursor") or self.s.get("yt_subscriber_cursor") or 0))
+
+    def on_twitch_event(self, alert):
+        self.overlay.push("alert", alert)
+        self.feed.append("<span style='color:#9146ff'>Twitch alert: %s %s</span>" %
+                         (esc(alert.get("name") or "Someone"), esc(alert.get("category") or "event")))
 
     def _send_chat_message(self):
         self.platform_auth.send_message(self.action_platform.currentData(), self.message_edit.text())
@@ -1383,8 +1462,10 @@ class MainWindow(QWidget):
             self.speaker.say(m.author, m.text, m.amount if m.kind == "super" else "")
             if m.platform != "tip":
                 self.overlay.push("chat", {"platform": m.platform, "name": m.author, "text": m.text})
-            if m.kind == "super":
-                self.overlay.push("alert", {"platform": m.platform, "name": m.author, "amount": m.amount, "message": m.text})
+            if m.kind in ("super", "member"):
+                category = "membership" if m.kind == "member" else ("tip" if m.platform == "tip" else "superchat")
+                self.overlay.push("alert", {"platform": m.platform, "category": category,
+                                            "name": m.author, "amount": m.amount, "message": m.text})
             if m.kind == "super":
                 self.discord.post_paid(m)
         else:
@@ -1412,6 +1493,8 @@ class MainWindow(QWidget):
     def closeEvent(self, e):
         self.links.save()
         self.music.stop()
+        self.twitch_events.stop()
+        self.yt_subscriber_timer.stop()
         self.overlay.stop()
         for c in self.cards.values():
             c.source.stop()
