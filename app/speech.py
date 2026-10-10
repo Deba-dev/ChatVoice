@@ -11,6 +11,7 @@ from PySide6.QtCore import QLocale, QObject, QTimer, QUrl, Signal
 from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
 
 from . import hinglish
+from .translation import translate_to_english
 
 try:
     from PySide6.QtTextToSpeech import QTextToSpeech
@@ -30,7 +31,7 @@ POOL_ALL = [v for _, v in VOICES]
 class Speaker(QObject):
     busy_changed = Signal(bool)
     note = Signal(str)                  # info/warning lines for the UI
-    _generated = Signal(int, str, str)  # token, mp3 path, error
+    _generated = Signal(int, str, str, str)  # token, mp3 path, error, spoken text
 
     def __init__(self, settings):
         super().__init__()
@@ -51,18 +52,15 @@ class Speaker(QObject):
     # ----- public -----
     def say(self, author, text, amount=""):
         """Queue a message. Oldest are dropped when chat is faster than speech."""
-        text = hinglish.normalize(text).strip()
+        translate = bool(self.s.get("translate_chat")) and bool((text or "").strip())
+        text = (text or "").strip()
+        if not translate:
+            text = hinglish.normalize(text).strip()
         if not text and not amount:
             return
-        if len(text) > self.s.get("max_len"):
-            text = text[: self.s.get("max_len")] + "..."
-        if amount:
-            spoken = "%s sent %s. %s" % (author, amount, text)
-        else:
-            spoken = ("%s: %s" % (author, text)) if self.s.get("read_name") else text
         if self.s.get("muted"):
             return
-        self.queue.append((author, spoken, bool(amount)))
+        self.queue.append((author, text, amount, translate))
         while len(self.queue) > self.s.get("queue_max"):
             # drop the oldest normal message first; paid messages are kept
             drop = next((i for i, q in enumerate(self.queue) if not q[2]), 0)
@@ -93,35 +91,57 @@ class Speaker(QObject):
     def _pump(self):
         if self.busy or not self.queue:
             return
-        author, spoken, _paid = self.queue.popleft()
-        self.current_spoken = spoken
+        author, text, amount, translate = self.queue.popleft()
         self.busy = True
         self.busy_changed.emit(True)
         self.token += 1
         self.watchdog.start(45000)
-        if self.s.get("engine") == "neural":
-            threading.Thread(target=self._generate, args=(self.token, spoken, self._voice_for(author, spoken)),
-                             daemon=True).start()
-        else:
-            self._speak_windows(spoken)
+        if self.s.get("engine") != "neural" and not translate:
+            self.current_spoken = self._format_spoken(author, text, amount)
+            return self._speak_windows(self.current_spoken)
+        threading.Thread(target=self._generate, args=(self.token, author, text, amount, translate),
+                         daemon=True).start()
 
-    def _generate(self, token, spoken, voice):
+    def _format_spoken(self, author, text, amount):
+        text = hinglish.normalize(text).strip()
+        if len(text) > self.s.get("max_len"):
+            text = text[:self.s.get("max_len")] + "..."
+        if amount:
+            return "%s sent %s. %s" % (author, amount, text)
+        return ("%s: %s" % (author, text)) if self.s.get("read_name") else text
+
+    def _generate(self, token, author, text, amount, translate):
+        translated = False
+        if translate:
+            try:
+                text = text[:min(500, int(self.s.get("max_len")))]
+                text, translated = translate_to_english(text, self.s)
+            except Exception as error:
+                self.note.emit("Translation unavailable (%s). Speaking the original message." % str(error)[:100])
+                text = hinglish.normalize(text).strip()
+        spoken = self._format_spoken(author, text, amount)
+        voice = self.s.get("en_voice") if translated else self._voice_for(author, spoken)
+        if self.s.get("engine") != "neural":
+            self._generated.emit(token, "", "", spoken)
+            return
         path = os.path.join(tempfile.gettempdir(), "chatvoice_%d_%d.mp3" % (os.getpid(), int(time.time() * 1000)))
         try:
             import edge_tts
             pct = int(self.s.get("rate")) * 10
             asyncio.run(edge_tts.Communicate(spoken, voice, rate="%+d%%" % pct).save(path))
-            self._generated.emit(token, path, "")
+            self._generated.emit(token, path, "", spoken)
         except Exception as e:
-            self._generated.emit(token, "", str(e)[:80])
+            self._generated.emit(token, "", str(e)[:80], spoken)
 
-    def _on_generated(self, token, path, err):
+    def _on_generated(self, token, path, err, spoken):
         if token != self.token:           # skipped while generating
             if path:
                 self._remove(path)
             return
+        self.current_spoken = spoken
         if err or not path:
-            self.note.emit("Neural voice unavailable (%s) - using Windows voice" % (err or "no audio"))
+            if err:
+                self.note.emit("Neural voice unavailable (%s) - using Windows voice" % err)
             return self._speak_windows(self.current_spoken)
         if self.player is None:
             self.player = QMediaPlayer(self)

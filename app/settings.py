@@ -23,7 +23,7 @@ DEFAULTS = {
     "engine": "neural", "hi_voice": "hi-IN-SwaraNeural", "en_voice": "hi-IN-MadhurNeural",
     "per_viewer": False, "rate": 0, "volume": 100, "read_name": True, "muted": False,
     "skip_links": True, "skip_cmds": True, "ignore_bots": True, "mods_only": False,
-    "read_super": True, "max_len": 150,
+    "read_super": True, "read_mode": "all", "translate_chat": False, "max_len": 150,
     "theme": "Neon Violet", "lite_mode": False,
     "inv_youtube": "", "inv_twitch": "", "inv_kick": "", "inv_role_youtube": "", "inv_role_twitch": "", "inv_role_kick": "",
     "cloud_url": CLOUD_URL, "cloud_token": "", "guild_id": "", "guild_name": "", "webhook_url": "",

@@ -112,9 +112,35 @@ bot_msg = Message("youtube", "ViewerHelper", "hello viewers", bot=True)
 ok(w.mod.check(bot_msg)[1] == "bot", "provider-marked bot messages are skipped even if they are not in the name list")
 known_bot = Message("youtube", "Nightbot", "welcome", "super", "100 bits")
 ok(w.mod.check(known_bot)[1] == "bot", "known bot accounts are skipped even when they post a paid-style event")
+w.s.set("read_mode", "paid")
+ok(w.mod.check(Message("youtube", "Viewer", "regular chat")) == (False, "normal messages off")
+   and w.mod.check(Message("twitch", "Supporter", "thanks", "super", "100 bits")) == (True, ""),
+   "paid-only chat mode skips regular messages but keeps enabled paid messages")
+w.s.set("read_mode", "all")
 from app.hinglish import normalize
 ok(normalize("Nice 😂👍 1️⃣ :heart:") == "Nice face with tears of joy thumbs up one heart",
    "emoji and emoji shortcodes are spoken by name rather than removed or read as symbols")
+from app import translation as translation_module
+from app.translation import detect_source_language, translate_to_english
+ok(detect_source_language("こんにちは、配信を見ています") == "ja"
+   and detect_source_language("Hola, me encanta este directo") == "es"
+   and detect_source_language("مرحبا، أحب مشاهدة البث") == "ar",
+   "language detection recognizes Japanese, Spanish, and Arabic chat")
+translation_request = {}
+old_urlopen = translation_module.urllib.request.urlopen
+translation_module.urllib.request.urlopen = lambda request, timeout: (
+    translation_request.update(request=request, payload=json.loads(request.data.decode("utf-8")))
+    or __import__("io").BytesIO(b'{"translation":"Hello from the stream!"}'))
+translated_text, did_translate = translate_to_english(
+    "こんにちは、配信を見ています",
+    type("TranslationSettings", (), {"get": lambda self, key: {
+        "cloud_url": "https://chatvoice.example", "cloud_token": "APP_SERVER_KEY"
+    }[key]})())
+translation_module.urllib.request.urlopen = old_urlopen
+ok(translated_text == "Hello from the stream!" and did_translate
+   and translation_request["payload"]["source_lang"] == "ja"
+   and translation_request["request"].get_header("Authorization") == "Bearer APP_SERVER_KEY",
+   "English translation uses detected source language and the authenticated Worker")
 from app.platforms import parse_kick_event, parse_twitch_line
 from app.platform_events import parse_twitch_event
 twitch_bot = parse_twitch_line("@display-name=Nightbot;user-id=123;emotes=25:0-4 :nightbot!nightbot@nightbot.tmi.twitch.tv PRIVMSG #chat :Kappa 😂")

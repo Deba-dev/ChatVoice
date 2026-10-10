@@ -1286,9 +1286,20 @@ class MainWindow(QWidget):
         lang_lay.addWidget(self._voice_field("Hinglish / English", "Choose the voice for Latin-script messages.", self._voice_combo("en_voice")))
 
         options, opt_lay = self._voice_section("Voice options", "Small choices for how messages are spoken.")
+        read_mode = QComboBox()
+        read_mode.addItem("Read every allowed chat message", "all")
+        read_mode.addItem("Read paid messages only", "paid")
+        read_mode.setCurrentIndex(max(0, read_mode.findData(self.s.get("read_mode") or "all")))
+        read_mode.currentIndexChanged.connect(lambda _: self.s.set("read_mode", read_mode.currentData()))
+        opt_lay.addWidget(self._voice_field(
+            "Chat reading mode", "Paid-only mode skips regular chat but still reads enabled Super Chats, Bits, memberships, and tips.",
+            read_mode))
         opt_lay.addWidget(self._voice_switch("Different voice for each viewer", "Use a different voice when possible for each viewer.", "per_viewer"))
         opt_lay.addWidget(self._voice_switch("Say the viewer's name first", "Speak the viewer's name before reading their message.", "read_name"))
-        opt_lay.addWidget(self._voice_switch("Read Super Chats / Bits", "Always read paid messages, even when normal messages are skipped.", "read_super"))
+        opt_lay.addWidget(self._voice_switch("Read paid messages", "Allow Super Chats, Bits, memberships, and tips to be read.", "read_super"))
+        opt_lay.addWidget(self._voice_switch(
+            "Translate chat into English", "Detect and translate non-English messages through Cloudflare AI before speaking. Requires your Discord cloud connection; usage is shared and limited.",
+            "translate_chat"))
 
         playback, play_lay = self._voice_section("Playback", "How fast and how loud the voice sounds.")
         play_lay.addWidget(self._voice_meter("Speed", "Controls how quickly messages are spoken.", "rate", -5, 5, lambda v: "%.1f×" % (1 + v * 0.1)))

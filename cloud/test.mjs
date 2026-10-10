@@ -4,6 +4,11 @@ import worker from "./src/index.js";
 const store = new Map();
 const KV = { async get(k) { return store.has(k) ? store.get(k) : null; }, async put(k, v) { store.set(k, v); }, async delete(k) { store.delete(k); } };
 const env = { KV, DISCORD_CLIENT_ID: "CID", DISCORD_CLIENT_SECRET: "SEC", DISCORD_BOT_TOKEN: "BOT" };
+const translatedInputs = [];
+env.AI = { async run(model, input) {
+  translatedInputs.push({ model, input });
+  return { translation: "Hello from the stream!" };
+} };
 const puts = [];
 const platformCalls = [];
 const eventSubCalls = [];
@@ -100,9 +105,32 @@ r = await call("/setup/callback?code=abc&state=bogus"); ok(r.status === 400, "ba
 
 // 2. auth + config + roles
 const H = { Authorization: "Bearer " + token, "content-type": "application/json" };
+let res;
 r = await call("/api/config", { headers: { Authorization: "Bearer nope" } }); ok(r.status === 401, "wrong key -> 401");
 r = await call("/api/roles", { headers: H }); const roles = (await r.json()).roles;
 ok(roles.length === 3 && roles[0].name === "Supporter", "roles listed (no @everyone / bot roles), highest first");
+r = await call("/api/translate", { method: "POST", headers: H, body: JSON.stringify({ text: "こんにちは", source_lang: "ja" }) });
+res = await r.json();
+ok(r.status === 200 && res.translation === "Hello from the stream!"
+  && translatedInputs.at(-1).model === "@cf/meta/m2m100-1.2b"
+  && translatedInputs.at(-1).input.source_lang === "ja"
+  && translatedInputs.at(-1).input.target_lang === "en",
+  "authenticated translation converts supported-language chat into English");
+r = await call("/api/translate", { method: "POST", headers: H, body: JSON.stringify({ text: "x".repeat(501), source_lang: "ja" }) });
+ok(r.status === 400, "translation input is length-limited");
+r = await worker.fetch(new Request("https://cv.example/api/translate", {
+  method: "POST", headers: { "content-type": "application/json" },
+  body: JSON.stringify({ text: "こんにちは", source_lang: "ja" }),
+}), { ...env, KV, AI: env.AI });
+ok(r.status === 401, "translation endpoint rejects requests without an app server key");
+r = await worker.fetch(new Request("https://cv.example/api/translate", {
+  method: "POST", headers: H,
+  body: JSON.stringify({ text: "こんにちは", source_lang: "ja" }),
+}), { ...env, AI: undefined });
+ok(r.status === 503, "translation reports a missing Workers AI binding explicitly");
+store.set("translate:usage:" + new Date().toISOString().slice(0, 10), "300");
+r = await call("/api/translate", { method: "POST", headers: H, body: JSON.stringify({ text: "こんにちは", source_lang: "ja" }) });
+ok(r.status === 429, "translation stops at the shared daily quota");
 r = await call("/api/config", { method: "PUT", headers: H, body: JSON.stringify({ verifiedRole: "100001", regularRole: "100002", supporterRole: "100003", regularMsgs: 3 }) });
 ok((await r.json()).ok, "config saved");
 r = await call("/api/config", { method: "PUT", headers: H, body: JSON.stringify({ verifiedRole: "evil" }) }); ok(r.status === 400, "bad role id rejected");
@@ -120,7 +148,7 @@ ok(code, "viewer gets a code: " + code);
 // 4. app claims the code from chat
 r = await call("/api/claim", { method: "POST", headers: H, body: JSON.stringify({ code: "ZZZZ-ZZZZ", platform: "youtube", uid: "UC1" }) }); ok(r.status === 404, "unknown code rejected");
 r = await call("/api/claim", { method: "POST", headers: H, body: JSON.stringify({ code, platform: "youtube", uid: "UC1" }) });
-let res = await r.json(); ok(res.ok && res.roleGranted && res.discordName === "Rahul", "claim links the account and grants Verified");
+res = await r.json(); ok(res.ok && res.roleGranted && res.discordName === "Rahul", "claim links the account and grants Verified");
 ok(puts.includes("100001"), "Discord got Verified role request");
 r = await call("/api/claim", { method: "POST", headers: H, body: JSON.stringify({ code, platform: "youtube", uid: "UC2" }) }); ok(r.status === 404, "code is single-use");
 r = await call("/api/links", { headers: H }); ok((await r.json()).keys[0] === "youtube:UC1", "links list returned to the app");
@@ -147,7 +175,7 @@ r = await worker.fetch(new Request("https://cv.example/setup"), { KV });
 html = await r.text(); ok(r.status === 500 && html.includes("DISCORD_CLIENT_ID"), "missing secrets -> page that names them");
 r = await worker.fetch(new Request("https://cv.example/health"), { KV, DISCORD_CLIENT_ID: "12345678901234567890", DISCORD_CLIENT_SECRET: "x", DISCORD_BOT_TOKEN: "" });
 const h = await r.json(); ok(h.DISCORD_CLIENT_ID.looks_right && !h.DISCORD_CLIENT_SECRET.looks_right && !h.DISCORD_BOT_TOKEN.set, "/health reports which settings are missing or look wrong");
-ok(!h.GOOGLE_OAUTH_CLIENT_ID.set && !h.PLATFORM_TOKEN_ENCRYPTION_KEY.set, "/health reports missing platform OAuth setup without revealing values");
+ok(!h.GOOGLE_OAUTH_CLIENT_ID.set && !h.PLATFORM_TOKEN_ENCRYPTION_KEY.set && !h.WORKERS_AI.set, "/health reports missing platform OAuth and optional AI setup without revealing values");
 r = await call("/platform-auth/start?" + new URLSearchParams({ platform: "youtube", return: "http://127.0.0.1:5599/done" }));
 ok(r.status === 503 && (await r.json()).error.includes("GOOGLE_OAUTH_CLIENT_ID"), "platform login fails with an explicit setup instruction when OAuth is not configured");
 const broken = { ...env, KV: { async get() { return null; }, async put() { throw new Error("storage down"); }, async delete() {} } };

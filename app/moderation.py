@@ -64,6 +64,8 @@ class Moderator:
             return False, "bot"
         if self._blocked_hit(text):
             return False, "blocked word"
+        if not paid and s.get("read_mode") == "paid":
+            return False, "normal messages off"
         if paid:
             return (True, "") if s.get("read_super") else (False, "paid messages off")
         if s.get("mods_only") and not m.mod:

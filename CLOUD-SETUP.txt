@@ -62,6 +62,16 @@ F. GIVE THE CLOUD ITS SECRETS  (each command asks you to paste the value)
        npx wrangler secret put PLATFORM_TOKEN_ENCRYPTION_KEY
    Never put these values in the repository or installer.
    npx wrangler deploy
+   Optional chat translation setup:
+   1. In the Cloudflare dashboard, open Workers AI and select "Get started" (or enable Workers AI for this account).
+      Review Cloudflare's current pricing and usage limits before enabling it.
+   2. Confirm cloud/wrangler.toml contains [ai] with binding = "AI". This project already has that binding configured;
+      it does not need an API key or another secret.
+   3. From the cloud folder, deploy the Worker after enabling Workers AI:
+          npx wrangler deploy
+   4. Open https://YOUR-ADDRESS/health and confirm WORKERS_AI is true. If it is false, verify the [ai] binding and
+      deploy again.
+   The Worker limits translation to 300 requests per day shared by all users and each message to 500 characters.
 
 F. CHECK
    Open  https://YOUR-ADDRESS/health  : configured items should say true. It never shows secret values.
@@ -92,6 +102,16 @@ EACH STREAMER  (ChatVoice > Connect page)
 4. Disconnect the account from its platform card to revoke ChatVoice's provider grant and remove its cloud session. The app
    encrypts its session handle using Windows DPAPI; provider tokens are encrypted in the cloud's D1 database.
 Kick remains read-only because this version has no supported Kick integration.
+OPTIONAL CHAT TRANSLATION (each streamer)
+1. Make sure the app is connected to the ChatVoice cloud from its Discord page. Translation uses this connection; YouTube
+   or Twitch account login is not required.
+2. Open Voice and turn on "Translate chat into English". It is off by default.
+3. Start or connect to chat as usual. Allowed non-English messages are translated into English before they are spoken.
+   English messages do not need translation. If translation fails, ChatVoice shows an error and tries to speak the
+   original message.
+The message text selected for translation is sent through the authenticated ChatVoice Worker to Cloudflare Workers AI.
+The shared daily limit is 300 requests for all users; messages are limited to 500 characters. Check Cloudflare's current
+pricing and usage in your account. To stop translation, turn the Voice option off.
 
 PLATFORM LOGIN NOTES
 - YouTube chat actions use the YouTube Data API and share the Google project's daily API quota across all app users.
@@ -122,5 +142,8 @@ TROUBLESHOOTING
 - "Invalid redirect": the two redirect links in step D are missing or have a typo.
 - "Could not give the ... role (403)": the ChatVoice role is below that role. Drag it higher.
 - Invite check says "Server Members Intent": switch it on in the Developer Portal (Bot tab).
+- Translation is unavailable: check /health for WORKERS_AI = true, confirm Workers AI is enabled in Cloudflare, and deploy
+  the Worker again from the cloud folder. Also confirm the Discord cloud connection is active and translation is enabled
+  under Voice.
 - After updating the cloud files: run  npx wrangler deploy  again. Secrets and data are kept.
 - Free limits (about 100,000 requests a day, 1,000 storage writes a day) are far above what ten streamers use.

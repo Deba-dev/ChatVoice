@@ -8,6 +8,13 @@ const API = "https://discord.com/api/v10";
 const PLATFORMS = ["youtube", "twitch", "kick"];
 const enc = new TextEncoder();
 const ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+const TRANSLATION_LANGUAGES = new Set([
+  "af", "ar", "bg", "bn", "ca", "cs", "cy", "da", "de", "el", "en", "es", "et", "fa", "fi", "fr", "gu",
+  "he", "hi", "hr", "hu", "id", "it", "ja", "jv", "ka", "kk", "km", "kn", "ko", "lo", "lt",
+  "lv", "mk", "ml", "mn", "mr", "ms", "my", "ne", "nl", "no", "pa", "pl", "pt", "ro", "ru", "si",
+  "sk", "sl", "so", "sq", "sv", "sw", "ta", "te", "th", "tl", "tr", "uk", "ur", "vi", "zh",
+]);
+const DAILY_TRANSLATION_LIMIT = 300;
 
 const json = (data, status = 200) =>
   new Response(JSON.stringify(data), { status, headers: { "content-type": "application/json" } });
@@ -382,6 +389,7 @@ function health(env) {
     TWITCH_CLIENT_ID: { set: set("TWITCH_CLIENT_ID"), looks_right: (env.TWITCH_CLIENT_ID || "").length >= 10 },
     TWITCH_CLIENT_SECRET: { set: set("TWITCH_CLIENT_SECRET") },
     PLATFORM_TOKEN_ENCRYPTION_KEY: { set: set("PLATFORM_TOKEN_ENCRYPTION_KEY"), looks_right: /^[A-Za-z0-9+/]{43}=$/.test(env.PLATFORM_TOKEN_ENCRYPTION_KEY || "") },
+    WORKERS_AI: { set: !!(env.AI && typeof env.AI.run === "function") },
     note: "looks_right only checks the shape of the value, never shows it",
   });
 }
@@ -522,6 +530,30 @@ async function api(request, env, url) {
     return { ...rest, hasRazorpaySecret: !!razorpaySecret, hasStripeSecret: !!stripeSecret, hasCashfreeSecret: !!cashfreeSecret,
       hasGenericSecret: !!genericSecret, hookUrl: hookUrls.razorpay, hookUrls };
   };
+
+  if (route === "POST /api/translate") {
+    if (!env.AI || typeof env.AI.run !== "function")
+      return json({ error: "Translation is not enabled on this Cloudflare Worker. Add the Workers AI binding and deploy again." }, 503);
+    const text = typeof body.text === "string" ? body.text.trim() : "";
+    const sourceLang = typeof body.source_lang === "string" ? body.source_lang.toLowerCase() : "";
+    if (!text || text.length > 500 || !TRANSLATION_LANGUAGES.has(sourceLang))
+      return json({ error: "Translation needs a message of 1-500 characters and a supported source language." }, 400);
+    if (sourceLang === "en") return json({ translation: text, unchanged: true });
+
+    const day = new Date().toISOString().slice(0, 10);
+    const quotaKey = "translate:usage:" + day;
+    const used = parseInt(await env.KV.get(quotaKey) || "0", 10) || 0;
+    if (used >= DAILY_TRANSLATION_LIMIT)
+      return json({ error: "The shared daily translation limit has been reached. It resets at midnight UTC." }, 429);
+    await env.KV.put(quotaKey, String(used + 1), { expirationTtl: 172800 });
+
+    const result = await env.AI.run("@cf/meta/m2m100-1.2b", {
+      text, source_lang: sourceLang, target_lang: "en",
+    });
+    const translated = typeof result?.translation === "string" ? result.translation.trim() : "";
+    if (!translated) return json({ error: "Cloudflare AI did not return a translation." }, 502);
+    return json({ translation: translated });
+  }
 
   if (route === "GET /api/config") return json({ guildId, guildName: guild.guildName, config: publicConfig() });
 

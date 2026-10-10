@@ -22,7 +22,7 @@ WHAT IS INSIDE
 PAGES IN THE APP
   Connect     paste your YouTube link and channel names, press Connect; optional YouTube/Twitch login enables chat messages and polls
   Live chat   combined feed; grey lines were skipped by moderation
-  Voice       voices, speed, volume, "different voice per viewer", Hinglish word list
+  Voice       voices, speed, volume, multilingual chat translation, all-chat / paid-only reading modes
   Moderation  what gets read aloud: link / command / bot / repeat filters, blocked words
   Discord     one click to add the bot, one click to make roles and invite links; the rest is under Advanced
   Payments    payment alerts (Razorpay / Stripe / Cashfree / any tool) plus a shareable quick tip link

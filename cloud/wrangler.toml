@@ -17,7 +17,10 @@ binding = "DB"
 database_name = "chatvoice"
 database_id = "b0c0a84c-ef80-4432-830b-479742f035be"
 
-# Secrets (set with: npx wrangler secret put NAME; see CLOUD-SETUP.txt)
+[ai]
+binding = "AI"
+
+# Secrets (set with:  npx wrangler secret put NAME; see CLOUD-SETUP.txt)
 #   DISCORD_CLIENT_ID, DISCORD_CLIENT_SECRET, DISCORD_BOT_TOKEN
 #   GOOGLE_OAUTH_CLIENT_ID, GOOGLE_OAUTH_CLIENT_SECRET, TWITCH_CLIENT_ID, TWITCH_CLIENT_SECRET
 #   PLATFORM_TOKEN_ENCRYPTION_KEY
